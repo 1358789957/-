@@ -4,8 +4,8 @@
  * Particles sit on a structured lattice: a center column plus concentric
  * rings. Constraints are distance (structure / shear / bend), tetrahedral
  * volume (nearly incompressible gel), floor contact, and an optional
- * finger collider. Softness maps to XPBD compliance so hard gel keeps
- * its cylinder while soft gel wobbles and slumps without exploding.
+ * finger collider. Softness maps to XPBD compliance. Shape matching
+ * keeps a cylinder after tipping, instead of collapsing into a blob.
  */
 
 const TWO_PI = Math.PI * 2;
@@ -16,6 +16,84 @@ function clamp(v, a, b) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+const _invT = new Float32Array(9);
+const _tmp3 = new Float32Array(9);
+
+function invert3(m, out) {
+  const a00 = m[0];
+  const a01 = m[1];
+  const a02 = m[2];
+  const a10 = m[3];
+  const a11 = m[4];
+  const a12 = m[5];
+  const a20 = m[6];
+  const a21 = m[7];
+  const a22 = m[8];
+  const b01 = a22 * a11 - a12 * a21;
+  const b11 = -a22 * a10 + a12 * a20;
+  const b21 = a21 * a10 - a11 * a20;
+  const det = a00 * b01 + a01 * b11 + a02 * b21;
+  if (Math.abs(det) < 1e-10) {
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 1;
+    out[5] = 0;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 1;
+    return false;
+  }
+  const inv = 1 / det;
+  out[0] = b01 * inv;
+  out[1] = (-a22 * a01 + a02 * a21) * inv;
+  out[2] = (a12 * a01 - a02 * a11) * inv;
+  out[3] = b11 * inv;
+  out[4] = (a22 * a00 - a02 * a20) * inv;
+  out[5] = (-a12 * a00 + a02 * a10) * inv;
+  out[6] = b21 * inv;
+  out[7] = (-a21 * a00 + a01 * a20) * inv;
+  out[8] = (a11 * a00 - a01 * a10) * inv;
+  return true;
+}
+
+function polarRotation(A, R) {
+  for (let i = 0; i < 9; i++) R[i] = A[i];
+  R[0] += 1e-5;
+  R[4] += 1e-5;
+  R[8] += 1e-5;
+  for (let iter = 0; iter < 8; iter++) {
+    if (!invert3(R, _tmp3)) break;
+    _invT[0] = _tmp3[0];
+    _invT[1] = _tmp3[3];
+    _invT[2] = _tmp3[6];
+    _invT[3] = _tmp3[1];
+    _invT[4] = _tmp3[4];
+    _invT[5] = _tmp3[7];
+    _invT[6] = _tmp3[2];
+    _invT[7] = _tmp3[5];
+    _invT[8] = _tmp3[8];
+    for (let k = 0; k < 9; k++) R[k] = 0.5 * (R[k] + _invT[k]);
+  }
+  const det =
+    R[0] * (R[4] * R[8] - R[5] * R[7]) -
+    R[1] * (R[3] * R[8] - R[5] * R[6]) +
+    R[2] * (R[3] * R[7] - R[4] * R[6]);
+  if (det < 0) {
+    R[2] = -R[2];
+    R[5] = -R[5];
+    R[8] = -R[8];
+  }
+}
+
+function blendRotation(prev, next) {
+  const axisDot =
+    prev[0] * next[0] + prev[4] * next[4] + prev[8] * next[8];
+  if (axisDot >= 0.12) return;
+  for (let i = 0; i < 9; i++) next[i] = prev[i] * 0.6 + next[i] * 0.4;
 }
 
 function tetVolume(pos, i, j, k, l) {
@@ -293,14 +371,34 @@ export class SoftCylinder {
     this._distSeen = null;
 
     this.com = new Float32Array(3);
+    this.restCom = new Float32Array(3);
+    this.qRest = new Float32Array(this.count * 3);
+    this.Amat = new Float32Array(9);
+    this.Rmat = new Float32Array(9);
+    this.lastR = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    this.upright = 1;
+    this._rebuildShapeRest();
+  }
+
+  _rebuildShapeRest() {
+    this._computeCom(this.rest, this.restCom);
+    const { rest, restCom, qRest, count } = this;
+    for (let i = 0; i < count; i++) {
+      const o = i * 3;
+      qRest[o] = rest[o] - restCom[0];
+      qRest[o + 1] = rest[o + 1] - restCom[1];
+      qRest[o + 2] = rest[o + 2] - restCom[2];
+    }
+    this.lastR.set([1, 0, 0, 0, 1, 0, 0, 0, 1]);
   }
 
   _applyMaterialParams() {
     const s = clamp(this.softness, 0, 1);
-    const structural = lerp(1.2e-5, 0.11, Math.pow(s, 1.4));
-    const shear = structural * lerp(1.5, 2.6, s);
-    const bend = structural * lerp(3.4, 7.2, s);
-    const volume = lerp(1.5e-6, 0.006, Math.pow(s, 1.65));
+    const structural = lerp(8e-6, 0.014, Math.pow(s, 1.35));
+    const shear = structural * lerp(1.45, 2.2, s);
+    const bend = structural * lerp(3.2, 5.5, s);
+    const volume = lerp(8e-7, 2.2e-4, Math.pow(s, 1.55));
+    this.shapeStiffness = lerp(0.4, 0.15, s);
 
     const kindComp = [structural, shear, bend];
     for (let i = 0; i < this.distComp.length; i++) {
@@ -361,6 +459,8 @@ export class SoftCylinder {
     this.pos.set(this.rest);
     this.prev.set(this.rest);
     this.vel.fill(0);
+    this.lastR.set([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    this.upright = 1;
     this.sleeping = false;
     this.releaseFinger();
     if (this.pinBottom) this.setPinBottom(true);
@@ -426,6 +526,7 @@ export class SoftCylinder {
       }
     }
     if (this.pinBottom) this.setPinBottom(true);
+    this._rebuildShapeRest();
     this._syncCarved();
     this.sleeping = false;
   }
@@ -436,6 +537,7 @@ export class SoftCylinder {
       if (this.mass[i] > 0) this.invMass[i] = 1 / this.mass[i];
     }
     if (this.pinBottom) this.setPinBottom(true);
+    this._rebuildShapeRest();
     this.sleeping = false;
   }
 
@@ -689,10 +791,9 @@ export class SoftCylinder {
   }
 
   _applyFloorFriction() {
-    const { pos, prev, rest, invMass, count, floorY } = this;
+    const { pos, prev, invMass, count, floorY } = this;
     const kinetic = lerp(0.22, 0.5, 1 - this.softness);
     const staticThresh = lerp(0.0022, 0.0004, this.softness);
-    const stick = this.baseStick * lerp(0.85, 0.35, this.softness);
     for (let i = 0; i < count; i++) {
       if (invMass[i] <= 0) continue;
       const o = i * 3;
@@ -707,10 +808,66 @@ export class SoftCylinder {
         pos[o] -= dx * kinetic;
         pos[o + 2] -= dz * kinetic;
       }
-      if (pos[o + 1] <= floorY + 0.02) {
-        pos[o] += (rest[o] - pos[o]) * stick;
-        pos[o + 2] += (rest[o + 2] - pos[o + 2]) * stick;
-      }
+    }
+  }
+
+  _shapeMatch() {
+    let k = this.shapeStiffness;
+    if (this.fingerActive || this.grabIndex >= 0) k *= 0.38;
+    if (k < 1e-4) return;
+
+    const { pos, invMass, carved, count, qRest, mass, Amat, Rmat, lastR, com } =
+      this;
+    this._computeCom(pos, com);
+    Amat.fill(0);
+    for (let i = 0; i < count; i++) {
+      if (carved[i]) continue;
+      const o = i * 3;
+      const m = mass[i];
+      const px = pos[o] - com[0];
+      const py = pos[o + 1] - com[1];
+      const pz = pos[o + 2] - com[2];
+      const qx = qRest[o];
+      const qy = qRest[o + 1];
+      const qz = qRest[o + 2];
+      Amat[0] += m * px * qx;
+      Amat[1] += m * px * qy;
+      Amat[2] += m * px * qz;
+      Amat[3] += m * py * qx;
+      Amat[4] += m * py * qy;
+      Amat[5] += m * py * qz;
+      Amat[6] += m * pz * qx;
+      Amat[7] += m * pz * qy;
+      Amat[8] += m * pz * qz;
+    }
+    polarRotation(Amat, Rmat);
+    blendRotation(lastR, Rmat);
+    lastR.set(Rmat);
+    this.upright = Math.abs(Rmat[4]);
+
+    const r00 = Rmat[0];
+    const r01 = Rmat[1];
+    const r02 = Rmat[2];
+    const r10 = Rmat[3];
+    const r11 = Rmat[4];
+    const r12 = Rmat[5];
+    const r20 = Rmat[6];
+    const r21 = Rmat[7];
+    const r22 = Rmat[8];
+
+    for (let i = 0; i < count; i++) {
+      if (carved[i] || invMass[i] <= 0) continue;
+      if (i === this.grabIndex) continue;
+      const o = i * 3;
+      const qx = qRest[o];
+      const qy = qRest[o + 1];
+      const qz = qRest[o + 2];
+      const gx = com[0] + r00 * qx + r01 * qy + r02 * qz;
+      const gy = com[1] + r10 * qx + r11 * qy + r12 * qz;
+      const gz = com[2] + r20 * qx + r21 * qy + r22 * qz;
+      pos[o] += (gx - pos[o]) * k;
+      pos[o + 1] += (gy - pos[o + 1]) * k;
+      pos[o + 2] += (gz - pos[o + 2]) * k;
     }
   }
 
@@ -802,6 +959,8 @@ export class SoftCylinder {
         this._solveCollisions();
       }
       this._solveCollisions();
+      this._shapeMatch();
+      this._projectFloor();
       this._applyFloorFriction();
       this._syncCarved();
 
