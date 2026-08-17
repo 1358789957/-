@@ -8,13 +8,13 @@ const _sample = new Float32Array(3);
  * be skinned from the filled XPBD lattice. Caps are filled disks, not rims.
  */
 export function visualRadialSegs(shape) {
-  return shape === "prism" ? 8 : 48;
+  return shape === "prism" ? 10 : 64;
 }
 
 export function createGelGeometry({
-  radialSegs = 48,
-  heightSegs = 36,
-  capRings = 8,
+  radialSegs = 64,
+  heightSegs = 56,
+  capRings = 10,
   caps = "both",
 } = {}) {
   const positions = [];
@@ -127,7 +127,59 @@ export function deformGelGeometry(geometry, soft, { normals = true } = {}) {
     restPos.needsUpdate = true;
     geometry.userData.restGen = soft.restGeneration;
   }
-  if (normals) geometry.computeVertexNormals();
+  if (normals) {
+    geometry.computeVertexNormals();
+    if (writeRest && geometry.attributes.uv) {
+      try {
+        geometry.computeTangents();
+      } catch {
+        /* indexed geometry without tangents is fine */
+      }
+    }
+  }
+}
+
+export function createSiliconeNormalMap() {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(size, size);
+  const data = img.data;
+  const heightAt = (x, y) => {
+    const u = ((x % size) + size) % size;
+    const v = ((y % size) + size) % size;
+    return (
+      Math.sin(u * 0.085 + v * 0.03) * 0.42 +
+      Math.sin(u * 0.21 - v * 0.17) * 0.28 +
+      Math.sin(u * 0.53 + v * 0.41) * 0.16 +
+      Math.sin(u * 1.1) * Math.cos(v * 0.93) * 0.1
+    );
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = heightAt(x + 1, y) - heightAt(x - 1, y);
+      const dy = heightAt(x, y + 1) - heightAt(x, y - 1);
+      const nx = -dx * 1.8;
+      const ny = -dy * 1.8;
+      const nz = 1;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+      const i = (y * size + x) * 4;
+      data[i] = (nx * inv * 0.5 + 0.5) * 255;
+      data[i + 1] = (ny * inv * 0.5 + 0.5) * 255;
+      data[i + 2] = (nz * inv * 0.5 + 0.5) * 255;
+      data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2.2, 3.4);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.NoColorSpace;
+  return tex;
 }
 
 const _tint = new THREE.Color();
@@ -147,8 +199,8 @@ export function applyGelColor(material, hex) {
     Math.max(0.16, Math.min(0.62, _hsl.l * 0.52))
   );
   material.attenuationColor.copy(_deep);
-  material.attenuationDistance = 0.28 + (1 - _hsl.s) * 0.28;
-  material.thickness = 0.48;
+  material.attenuationDistance = 0.42 + (1 - _hsl.s) * 0.38;
+  material.thickness = 0.72;
   _sheen.copy(_tint).lerp(new THREE.Color(0xffffff), 0.42);
   material.sheenColor.copy(_sheen);
 }
@@ -157,23 +209,25 @@ export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
   const material = new THREE.MeshPhysicalMaterial({
     color: 0xc8f4ff,
     metalness: 0,
-    roughness: 0.07,
-    transmission: 0.84,
-    thickness: 0.52,
+    roughness: 0.055,
+    transmission: 0.94,
+    thickness: 0.78,
     ior: 1.41,
     transparent: true,
     opacity: 1,
-    attenuationColor: new THREE.Color(0x3e9ad4),
-    attenuationDistance: 0.36,
-    clearcoat: 1,
-    clearcoatRoughness: 0.07,
-    sheen: 0.48,
-    sheenColor: new THREE.Color(0xe4f7ff),
-    iridescence: 0.08,
-    iridescenceIOR: 1.3,
-    specularIntensity: 0.9,
-    envMapIntensity: 1.55,
+    attenuationColor: new THREE.Color(0x2f86c4),
+    attenuationDistance: 0.48,
+    clearcoat: 0.85,
+    clearcoatRoughness: 0.1,
+    sheen: 0.28,
+    sheenColor: new THREE.Color(0xeef8ff),
+    iridescence: 0.06,
+    iridescenceIOR: 1.28,
+    specularIntensity: 1,
+    envMapIntensity: 1.35,
     side: THREE.FrontSide,
+    normalMap: createSiliconeNormalMap(),
+    normalScale: new THREE.Vector2(0.11, 0.11),
   });
   applyGelColor(material, hex);
   return material;

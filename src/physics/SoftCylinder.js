@@ -262,7 +262,8 @@ export class SoftCylinder {
     this.H = heightSegs + 1;
     this.rings = rings;
     this.innerRatio = 0;
-    this.profileAdd = new Float32Array(this.H);
+    this.profileRes = 64;
+    this.profileAdd = new Float32Array(this.profileRes);
     this.softness = softness;
     this.damping = damping;
     this.gravity = gravity;
@@ -425,13 +426,26 @@ export class SoftCylinder {
   }
 
   _profileAt(yNorm) {
-    const H = this.H;
-    if (!this.profileAdd || H < 2) return 0;
-    const hf = clamp(yNorm, 0, 1) * (H - 1);
-    const h0 = Math.floor(hf);
-    const h1 = Math.min(h0 + 1, H - 1);
-    const t = hf - h0;
-    return this.profileAdd[h0] * (1 - t) + this.profileAdd[h1] * t;
+    const n = this.profileRes || this.profileAdd?.length || 0;
+    if (!this.profileAdd || n < 2) return 0;
+    const hf = clamp(yNorm, 0, 1) * (n - 1);
+    const i1 = Math.floor(hf);
+    const i2 = Math.min(i1 + 1, n - 1);
+    const t = hf - i1;
+    const i0 = Math.max(0, i1 - 1);
+    const i3 = Math.min(n - 1, i2 + 1);
+    const p0 = this.profileAdd[i0];
+    const p1 = this.profileAdd[i1];
+    const p2 = this.profileAdd[i2];
+    const p3 = this.profileAdd[i3];
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (
+      2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+    );
   }
 
   _applyProfile(out, yNorm) {
@@ -465,16 +479,16 @@ export class SoftCylinder {
   }
 
   sculptRadius(yNorm, delta, brush = 0.18) {
-    const H = this.H;
+    const n = this.profileRes || this.profileAdd.length;
     const height = this.height;
     let changed = 0;
-    for (let h = 0; h < H; h++) {
-      const yn = h / (H - 1);
+    for (let i = 0; i < n; i++) {
+      const yn = i / (n - 1);
       const d = (yn - yNorm) * height;
       const w = Math.exp(-(d * d) / (brush * brush));
-      const next = clamp(this.profileAdd[h] + delta * w, -0.22, 0.52);
-      changed += Math.abs(next - this.profileAdd[h]);
-      this.profileAdd[h] = next;
+      const next = clamp(this.profileAdd[i] + delta * w, -0.22, 0.52);
+      changed += Math.abs(next - this.profileAdd[i]);
+      this.profileAdd[i] = next;
     }
     if (changed < 1e-6) return false;
     const keepPose = this.frozen;
@@ -1639,15 +1653,16 @@ export class SoftCylinder {
     const hf = clamp(yNorm, 0, 1) * (H - 1);
     const aWrap = (((theta / TWO_PI) % 1) + 1) % 1 * A;
 
+    const fade = (t) => t * t * (3 - 2 * t);
     const r0 = Math.floor(rf);
     const r1 = Math.min(r0 + 1, rings);
-    const tr = rf - r0;
+    const tr = fade(rf - r0);
     const h0 = Math.floor(hf);
     const h1 = Math.min(h0 + 1, H - 1);
-    const th = hf - h0;
+    const th = fade(hf - h0);
     const a0 = Math.floor(aWrap) % A;
     const a1 = (a0 + 1) % A;
-    const ta = aWrap - Math.floor(aWrap);
+    const ta = fade(aWrap - Math.floor(aWrap));
 
     const pick = (r, h, a) => this.indexAt(r, h, a) * 3;
 

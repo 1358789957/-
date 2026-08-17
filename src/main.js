@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GEL_SHAPES, SoftCylinder, isBodyGrabHeight, wrapDeg } from "./physics/SoftCylinder.js";
 import {
   DEFAULT_GEL_COLOR,
@@ -11,6 +10,11 @@ import {
   deformGelGeometry,
   visualRadialSegs,
 } from "./render/gelMesh.js";
+import {
+  createContactShadow,
+  createStudioBackdrop,
+  createStudioEnvironment,
+} from "./render/studio.js";
 import {
   CarveSet,
   makeHoleOp,
@@ -95,14 +99,15 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.14;
+renderer.toneMappingExposure = 1.02;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0e14);
-scene.fog = new THREE.Fog(0x0b0e14, 8, 18);
+scene.background = new THREE.Color(0x10141c);
+scene.fog = new THREE.Fog(0x10141c, 10, 22);
 
 const camera = new THREE.PerspectiveCamera(
   38,
@@ -121,69 +126,56 @@ controls.minDistance = 1.1;
 controls.maxDistance = 6;
 controls.maxPolarAngle = Math.PI * 0.49;
 
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = createStudioEnvironment(renderer);
+scene.add(createStudioBackdrop());
 
-const hemi = new THREE.HemisphereLight(0xc4dcff, 0x1a140e, 0.62);
+const hemi = new THREE.HemisphereLight(0xd4e4ff, 0x1c1610, 0.42);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfff4e6, 1.48);
-key.position.set(2.4, 4.2, 1.6);
+const key = new THREE.DirectionalLight(0xfff3e4, 1.7);
+key.position.set(2.6, 4.6, 1.8);
 key.castShadow = true;
-key.shadow.mapSize.set(1024, 1024);
+key.shadow.mapSize.set(isPhoneHud() ? 1024 : 2048, isPhoneHud() ? 1024 : 2048);
 key.shadow.camera.near = 0.5;
 key.shadow.camera.far = 12;
-key.shadow.camera.left = -2.5;
-key.shadow.camera.right = 2.5;
-key.shadow.camera.top = 2.5;
-key.shadow.camera.bottom = -2.5;
-key.shadow.bias = -0.0004;
+key.shadow.camera.left = -2.4;
+key.shadow.camera.right = 2.4;
+key.shadow.camera.top = 2.4;
+key.shadow.camera.bottom = -2.4;
+key.shadow.bias = -0.00035;
+key.shadow.radius = 2.2;
 scene.add(key);
-const fill = new THREE.DirectionalLight(0x7ec8ff, 0.38);
-fill.position.set(-2.2, 1.4, -1.8);
+const fill = new THREE.DirectionalLight(0x8fd2ff, 0.48);
+fill.position.set(-2.4, 1.6, -1.6);
 scene.add(fill);
-const rim = new THREE.DirectionalLight(0xb8ecff, 0.32);
-rim.position.set(-0.6, 1.1, 2.6);
+const rim = new THREE.DirectionalLight(0xc4f0ff, 0.55);
+rim.position.set(-0.4, 1.3, 2.8);
 scene.add(rim);
 
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(4.5, 72),
-  new THREE.MeshStandardMaterial({
-    color: 0x141820,
-    metalness: 0.35,
-    roughness: 0.42,
-    envMapIntensity: 0.55,
-  })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-
-const pedestal = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.62, 0.68, 0.06, 64),
-  new THREE.MeshStandardMaterial({
-    color: 0x2a313c,
-    metalness: 0.55,
-    roughness: 0.28,
-  })
-);
-pedestal.position.y = 0.03;
-pedestal.receiveShadow = true;
-scene.add(pedestal);
+const contactShadow = createContactShadow();
+scene.add(contactShadow);
 
 const soft = new SoftCylinder({
   radius: 0.36,
   height: 1.42,
-  radialSegs: 8,
-  heightSegs: 11,
+  radialSegs: 10,
+  heightSegs: 13,
   rings: 3,
   softness: 0.55,
   damping: 0.26,
   gravity: -7.2,
 });
 
-let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 40, capRings: 8, caps: "both" });
+function visualQuality() {
+  if (isPhoneHud()) return { radialSegs: 48, heightSegs: 44, capRings: 8 };
+  return { radialSegs: 64, heightSegs: 56, capRings: 10 };
+}
+
+let gelGeom = createGelGeometry({ ...visualQuality(), caps: "both" });
 deformGelGeometry(gelGeom, soft);
 const gelMat = createGelMaterial();
+if (gelMat.normalMap) {
+  gelMat.normalMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+}
 const gel = new THREE.Mesh(gelGeom, gelMat);
 gel.castShadow = true;
 gel.receiveShadow = true;
@@ -226,19 +218,35 @@ previewSphere.visible = false;
 previewSlice.visible = false;
 scene.add(previewHole, previewSphere, previewSlice);
 
+const sculptRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1, 0.007, 10, 72),
+  new THREE.MeshBasicMaterial({
+    color: 0x9be6ff,
+    transparent: true,
+    opacity: 0.62,
+    depthWrite: false,
+  })
+);
+sculptRing.visible = false;
+scene.add(sculptRing);
+
+const _guideA = new Float32Array(3);
+const _guideB = new Float32Array(3);
+
 let editMode = false;
 let currentTool = "sculpt";
 
 const fingerMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1, 32, 24),
   new THREE.MeshPhysicalMaterial({
-    color: 0xf2fbff,
-    roughness: 0.18,
-    transmission: 0.35,
-    thickness: 0.4,
+    color: 0xf7fbff,
+    roughness: 0.22,
+    transmission: 0.55,
+    thickness: 0.25,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.42,
     metalness: 0,
+    depthWrite: false,
   })
 );
 fingerMesh.visible = false;
@@ -417,6 +425,25 @@ function hidePreviews() {
   previewHole.visible = false;
   previewSphere.visible = false;
   previewSlice.visible = false;
+  sculptRing.visible = false;
+}
+
+function updateSculptGuide(rest) {
+  if (!editMode || currentTool !== "sculpt" || !rest) {
+    sculptRing.visible = false;
+    return;
+  }
+  soft.sample(1, 0, rest.yNorm, _guideA);
+  soft.sample(1, Math.PI, rest.yNorm, _guideB);
+  const cx = (_guideA[0] + _guideB[0]) * 0.5;
+  const cy = (_guideA[1] + _guideB[1]) * 0.5;
+  const cz = (_guideA[2] + _guideB[2]) * 0.5;
+  const rad = Math.max(0.04, Math.hypot(_guideA[0] - cx, _guideA[1] - cy, _guideA[2] - cz));
+  gelAxisY(_axis);
+  sculptRing.position.set(cx, cy, cz);
+  sculptRing.scale.set(rad, rad, rad);
+  sculptRing.quaternion.setFromUnitVectors(_restA.set(0, 0, 1), _axis);
+  sculptRing.visible = true;
 }
 
 function sculptBrush() {
@@ -445,7 +472,11 @@ function restRadial(rest, out) {
 
 function updatePreview(rest) {
   hidePreviews();
-  if (!editMode || !rest || currentTool === "sculpt") return;
+  if (!editMode || !rest) return;
+  if (currentTool === "sculpt") {
+    updateSculptGuide(rest);
+    return;
+  }
   const r = toolRadius();
   if (currentTool === "hole") {
     const op = makeHoleOp(rest, true, r);
@@ -503,6 +534,7 @@ function moveSculpt() {
   if (Math.abs(delta) < 1e-5) return;
   if (soft.sculptRadius(sculptYNorm, delta * 0.92, sculptBrush())) {
     meshDirty = true;
+    updateSculptGuide({ x: 0, y: 0, z: 0, yNorm: sculptYNorm });
   }
 }
 
@@ -651,9 +683,9 @@ function focusCameraForShape() {
 
 function rebuildGelVisual() {
   const next = createGelGeometry({
-    radialSegs: visualRadialSegs(soft.shape),
-    heightSegs: 40,
-    capRings: 8,
+    radialSegs: visualRadialSegs(soft.shape) === 10 ? 10 : visualQuality().radialSegs,
+    heightSegs: visualQuality().heightSegs,
+    capRings: visualQuality().capRings,
     caps: gelCapsFor(soft.shape),
   });
   deformGelGeometry(next, soft);
@@ -933,6 +965,13 @@ function tick(now) {
     gelGeom.computeBoundingSphere();
     meshDirty = editMode ? false : !soft.sleeping;
   }
+  soft._computeCom(soft.pos, soft.com);
+  contactShadow.position.x = soft.com[0];
+  contactShadow.position.z = soft.com[2];
+  const lift = Math.max(0, soft.com[1] - 0.45);
+  const spread = 0.38 + lift * 0.18;
+  contactShadow.scale.setScalar(spread);
+  contactShadow.material.opacity = Math.max(0.06, 0.3 - lift * 0.12);
   controls.update();
   renderer.render(scene, camera);
 

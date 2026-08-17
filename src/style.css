@@ -1,8 +1,8 @@
 :root {
   color-scheme: dark;
   --bg: #0b0e14;
-  --panel: rgba(16, 20, 28, 0.72);
-  --line: rgba(180, 220, 255, 0.16);
+  --panel: rgba(14, 18, 26, 0.78);
+  --line: rgba(180, 220, 255, 0.14);
   --text: #e8f4ff;
   --muted: #8aa0b8;
   --accent: #7ad4ff;
@@ -185,8 +185,8 @@ body {
   border-radius: 18px;
   background: var(--panel);
   border: 1px solid var(--line);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(22px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
   z-index: 2;
   touch-action: manipulation;
 }
