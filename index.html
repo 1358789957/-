@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>透明软胶 · 物理模拟</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="c"></canvas>
+      <aside class="hud">
+        <h1>圆柱透明软胶</h1>
+        <p class="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
+
+        <div class="row">
+          <label for="softness">软度</label>
+          <output id="softnessOut">55%</output>
+        </div>
+        <input id="softness" type="range" min="0" max="100" value="55" />
+
+        <div class="presets">
+          <button type="button" data-soft="18">硬胶</button>
+          <button type="button" data-soft="55">中等</button>
+          <button type="button" data-soft="88">超软</button>
+        </div>
+
+        <div class="row">
+          <label for="damping">阻尼</label>
+          <output id="dampingOut">22%</output>
+        </div>
+        <input id="damping" type="range" min="4" max="80" value="22" />
+
+        <div class="row">
+          <label for="gravity">重力</label>
+          <output id="gravityOut">7.2</output>
+        </div>
+        <input id="gravity" type="range" min="0" max="140" value="72" />
+
+        <div class="actions">
+          <button type="button" id="reset">复位</button>
+          <button type="button" id="drop">抛落</button>
+          <button type="button" id="poke">轻弹</button>
+        </div>
+        <label class="check">
+          <input id="pinBottom" type="checkbox" />
+          固定底部
+        </label>
+      </aside>
+      <div class="stats" id="stats"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,279 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { SoftCylinder } from "./physics/SoftCylinder.js";
+import {
+  createGelGeometry,
+  createGelMaterial,
+  deformGelGeometry,
+} from "./render/gelMesh.js";
+
+const canvas = document.querySelector("#c");
+const statsEl = document.querySelector("#stats");
+const softnessEl = document.querySelector("#softness");
+const softnessOut = document.querySelector("#softnessOut");
+const dampingEl = document.querySelector("#damping");
+const dampingOut = document.querySelector("#dampingOut");
+const gravityEl = document.querySelector("#gravity");
+const gravityOut = document.querySelector("#gravityOut");
+const pinEl = document.querySelector("#pinBottom");
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  alpha: false,
+  powerPreference: "high-performance",
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e14);
+scene.fog = new THREE.Fog(0x0b0e14, 8, 18);
+
+const camera = new THREE.PerspectiveCamera(
+  38,
+  window.innerWidth / window.innerHeight,
+  0.08,
+  40
+);
+camera.position.set(1.55, 1.35, 2.15);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0.78, 0);
+controls.minDistance = 1.1;
+controls.maxDistance = 6;
+controls.maxPolarAngle = Math.PI * 0.49;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const hemi = new THREE.HemisphereLight(0xb9d7ff, 0x1a140e, 0.55);
+scene.add(hemi);
+const key = new THREE.DirectionalLight(0xfff4e6, 1.35);
+key.position.set(2.4, 4.2, 1.6);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.near = 0.5;
+key.shadow.camera.far = 12;
+key.shadow.camera.left = -2.5;
+key.shadow.camera.right = 2.5;
+key.shadow.camera.top = 2.5;
+key.shadow.camera.bottom = -2.5;
+key.shadow.bias = -0.0004;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x7ec8ff, 0.35);
+fill.position.set(-2.2, 1.4, -1.8);
+scene.add(fill);
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(4.5, 72),
+  new THREE.MeshStandardMaterial({
+    color: 0x141820,
+    metalness: 0.35,
+    roughness: 0.42,
+    envMapIntensity: 0.55,
+  })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const pedestal = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.62, 0.68, 0.06, 64),
+  new THREE.MeshStandardMaterial({
+    color: 0x2a313c,
+    metalness: 0.55,
+    roughness: 0.28,
+  })
+);
+pedestal.position.y = 0.03;
+pedestal.receiveShadow = true;
+scene.add(pedestal);
+
+const soft = new SoftCylinder({
+  radius: 0.36,
+  height: 1.42,
+  radialSegs: 8,
+  heightSegs: 10,
+  rings: 3,
+  softness: 0.55,
+  damping: 0.22,
+  gravity: -7.2,
+});
+
+const gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 36, capRings: 8 });
+deformGelGeometry(gelGeom, soft);
+const gelMat = createGelMaterial();
+const gel = new THREE.Mesh(gelGeom, gelMat);
+gel.castShadow = true;
+gel.receiveShadow = true;
+scene.add(gel);
+
+const fingerMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 32, 24),
+  new THREE.MeshPhysicalMaterial({
+    color: 0xf2fbff,
+    roughness: 0.18,
+    transmission: 0.35,
+    thickness: 0.4,
+    transparent: true,
+    opacity: 0.55,
+    metalness: 0,
+  })
+);
+fingerMesh.visible = false;
+fingerMesh.castShadow = true;
+scene.add(fingerMesh);
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const grabPlane = new THREE.Plane();
+const hitPoint = new THREE.Vector3();
+const planeHit = new THREE.Vector3();
+const camDir = new THREE.Vector3();
+
+let interacting = false;
+let frames = 0;
+let fps = 0;
+let fpsAccum = 0;
+let last = performance.now();
+
+function setPointer(event) {
+  const src = event.touches ? event.touches[0] : event;
+  if (!src) return;
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = ((src.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((src.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function beginInteract(event) {
+  if (event.touches && event.touches.length > 1) return;
+  setPointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObject(gel, false);
+  if (!hits.length) return;
+  event.preventDefault();
+  interacting = true;
+  controls.enabled = false;
+  const p = hits[0].point;
+  hitPoint.copy(p);
+  camera.getWorldDirection(camDir);
+  grabPlane.setFromNormalAndCoplanarPoint(camDir, p);
+  const idx = soft.closestParticle(p.x, p.y, p.z, true);
+  soft.grabParticle(idx, p.x, p.y, p.z);
+  soft.attachFinger(p.x, p.y, p.z, 0.13);
+  fingerMesh.position.copy(p);
+  fingerMesh.scale.setScalar(0.13);
+  fingerMesh.visible = true;
+}
+
+function moveInteract(event) {
+  if (!interacting) return;
+  setPointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  camera.getWorldDirection(camDir);
+  grabPlane.normal.copy(camDir);
+  if (raycaster.ray.intersectPlane(grabPlane, planeHit)) {
+    soft.moveGrab(planeHit.x, planeHit.y, planeHit.z);
+    soft.moveFinger(planeHit.x, planeHit.y, planeHit.z);
+    fingerMesh.position.copy(planeHit);
+  }
+}
+
+function endInteract() {
+  if (!interacting) return;
+  interacting = false;
+  controls.enabled = true;
+  soft.releaseFinger();
+  fingerMesh.visible = false;
+}
+
+canvas.addEventListener("pointerdown", beginInteract);
+window.addEventListener("pointermove", moveInteract);
+window.addEventListener("pointerup", endInteract);
+window.addEventListener("pointercancel", endInteract);
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length === 1) beginInteract(e);
+  },
+  { passive: false }
+);
+window.addEventListener("touchmove", moveInteract, { passive: false });
+window.addEventListener("touchend", endInteract);
+window.addEventListener("touchcancel", endInteract);
+
+function applySoftness(percent) {
+  const s = Number(percent) / 100;
+  softnessEl.value = String(percent);
+  softnessOut.textContent = `${Math.round(percent)}%`;
+  soft.setSoftness(s);
+  document.querySelectorAll("[data-soft]").forEach((btn) => {
+    btn.classList.toggle("active", Number(btn.dataset.soft) === Number(percent));
+  });
+}
+
+softnessEl.addEventListener("input", () => applySoftness(softnessEl.value));
+dampingEl.addEventListener("input", () => {
+  const d = Number(dampingEl.value) / 100;
+  dampingOut.textContent = `${Math.round(d * 100)}%`;
+  soft.setDamping(d);
+});
+gravityEl.addEventListener("input", () => {
+  const g = Number(gravityEl.value) / 10;
+  gravityOut.textContent = g.toFixed(1);
+  soft.setGravity(-g);
+});
+pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
+document.querySelector("#reset").addEventListener("click", () => soft.reset());
+document.querySelector("#drop").addEventListener("click", () => {
+  pinEl.checked = false;
+  soft.setPinBottom(false);
+  soft.drop(1.05);
+});
+document.querySelector("#poke").addEventListener("click", () => {
+  const mid = soft.closestParticle(soft.radius, soft.height * 0.62, 0, true);
+  const o = mid * 3;
+  soft.vel[o] += 2.8;
+  soft.vel[o + 2] += 0.4;
+  soft.sleeping = false;
+});
+document.querySelectorAll("[data-soft]").forEach((btn) => {
+  btn.addEventListener("click", () => applySoftness(btn.dataset.soft));
+});
+applySoftness(55);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function tick(now) {
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+  soft.step(dt);
+  deformGelGeometry(gelGeom, soft);
+  gelGeom.computeBoundingSphere();
+  controls.update();
+  renderer.render(scene, camera);
+
+  frames += 1;
+  fpsAccum += dt;
+  if (fpsAccum >= 0.4) {
+    fps = Math.round(frames / fpsAccum);
+    frames = 0;
+    fpsAccum = 0;
+    statsEl.textContent = `${fps} FPS · ${soft.count} 质点 · ${soft.distI.length} 距离约束 · ${soft.tetI.length} 体积单元`;
+  }
+  requestAnimationFrame(tick);
+}
+
+requestAnimationFrame(tick);
