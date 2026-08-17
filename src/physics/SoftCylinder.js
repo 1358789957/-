@@ -398,7 +398,7 @@ export class SoftCylinder {
     const shear = structural * lerp(1.45, 2.2, s);
     const bend = structural * lerp(3.2, 5.5, s);
     const volume = lerp(8e-7, 2.2e-4, Math.pow(s, 1.55));
-    this.shapeStiffness = lerp(0.4, 0.15, s);
+    this.shapeStiffness = lerp(0.62, 0.32, s);
 
     const kindComp = [structural, shear, bend];
     for (let i = 0; i < this.distComp.length; i++) {
@@ -959,6 +959,7 @@ export class SoftCylinder {
         this._solveCollisions();
       }
       this._solveCollisions();
+      this._shapeMatch();
       this._shapeMatch();
       this._projectFloor();
       this._applyFloorFriction();

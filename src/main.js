@@ -36,7 +36,12 @@ const toolSizeEl = document.querySelector("#toolSize");
 const toolSizeOut = document.querySelector("#toolSizeOut");
 const hudEl = document.querySelector("#hud");
 const hudToggle = document.querySelector("#hudToggle");
-const narrowHud = window.matchMedia("(max-width: 640px)");
+const hudBar = hudEl.querySelector(".hud-bar");
+const compactHud = window.matchMedia("(max-width: 920px), (max-height: 720px)");
+
+function isPhoneHud() {
+  return compactHud.matches || window.matchMedia("(pointer: coarse)").matches;
+}
 
 function setHudCollapsed(collapsed) {
   hudEl.classList.toggle("collapsed", collapsed);
@@ -44,13 +49,23 @@ function setHudCollapsed(collapsed) {
   hudToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
 }
 
-setHudCollapsed(narrowHud.matches);
-hudToggle.addEventListener("click", (event) => {
+function toggleHud(event) {
+  event.preventDefault();
   event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === "function") {
+    event.stopImmediatePropagation();
+  }
   setHudCollapsed(!hudEl.classList.contains("collapsed"));
+}
+
+setHudCollapsed(isPhoneHud());
+hudToggle.addEventListener("pointerdown", toggleHud);
+hudBar.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("#hudToggle") || event.target.closest("input,button,label")) return;
+  toggleHud(event);
 });
-narrowHud.addEventListener("change", () => {
-  if (narrowHud.matches) setHudCollapsed(true);
+compactHud.addEventListener("change", () => {
+  if (isPhoneHud()) setHudCollapsed(true);
 });
 
 const renderer = new THREE.WebGLRenderer({
