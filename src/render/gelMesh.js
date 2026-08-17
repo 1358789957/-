@@ -139,7 +139,7 @@ export function applyGelColor(material, hex) {
   );
   material.attenuationColor.copy(_deep);
   material.attenuationDistance = 0.2 + (1 - _hsl.s) * 0.22;
-  material.thickness = 0.11;
+  material.thickness = 0.22;
   _sheen.copy(_tint).lerp(new THREE.Color(0xffffff), 0.42);
   material.sheenColor.copy(_sheen);
 }
@@ -148,20 +148,22 @@ export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
   const material = new THREE.MeshPhysicalMaterial({
     color: 0xc8f4ff,
     metalness: 0,
-    roughness: 0.075,
+    roughness: 0.062,
     transmission: 0.86,
-    thickness: 0.12,
+    thickness: 0.24,
     ior: 1.41,
     transparent: true,
     opacity: 1,
-    attenuationColor: new THREE.Color(0x6ec8ff),
-    attenuationDistance: 0.26,
+    attenuationColor: new THREE.Color(0x4aa8e8),
+    attenuationDistance: 0.28,
     clearcoat: 1,
-    clearcoatRoughness: 0.08,
-    sheen: 0.15,
-    sheenColor: new THREE.Color(0xb8e8ff),
-    specularIntensity: 1,
-    envMapIntensity: 1.15,
+    clearcoatRoughness: 0.06,
+    sheen: 0.52,
+    sheenColor: new THREE.Color(0xe4f7ff),
+    iridescence: 0.09,
+    iridescenceIOR: 1.3,
+    specularIntensity: 0.92,
+    envMapIntensity: 1.62,
     side: THREE.DoubleSide,
   });
   applyGelColor(material, hex);

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { GEL_SHAPES, SoftCylinder, wrapDeg } from "./physics/SoftCylinder.js";
+import { GEL_SHAPES, SoftCylinder, isBodyGrabHeight, wrapDeg } from "./physics/SoftCylinder.js";
 import {
   DEFAULT_GEL_COLOR,
   applyGelColor,
@@ -36,12 +36,16 @@ const modeEditEl = document.querySelector("#modeEdit");
 const editPanelEl = document.querySelector("#editPanel");
 const toolSizeEl = document.querySelector("#toolSize");
 const toolSizeOut = document.querySelector("#toolSizeOut");
+const quickPose = document.querySelector("#quickPose");
 const quickReset = document.querySelector("#quickReset");
 const quickFix = document.querySelector("#quickFix");
+const axisToggle = document.querySelector("#axisToggle");
+const axisPad = document.querySelector("#axisPad");
 const axisXEl = document.querySelector("#axisX");
 const axisYEl = document.querySelector("#axisY");
 const axisZEl = document.querySelector("#axisZ");
 const axisZeroEl = document.querySelector("#axisZero");
+const fullResetEl = document.querySelector("#fullReset");
 const hudEl = document.querySelector("#hud");
 const hudToggle = document.querySelector("#hudToggle");
 const hudBar = hudEl.querySelector(".hud-bar");
@@ -92,7 +96,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.14;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -120,9 +124,9 @@ controls.maxPolarAngle = Math.PI * 0.49;
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-const hemi = new THREE.HemisphereLight(0xb9d7ff, 0x1a140e, 0.55);
+const hemi = new THREE.HemisphereLight(0xc4dcff, 0x1a140e, 0.62);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfff4e6, 1.35);
+const key = new THREE.DirectionalLight(0xfff4e6, 1.48);
 key.position.set(2.4, 4.2, 1.6);
 key.castShadow = true;
 key.shadow.mapSize.set(1024, 1024);
@@ -134,9 +138,12 @@ key.shadow.camera.top = 2.5;
 key.shadow.camera.bottom = -2.5;
 key.shadow.bias = -0.0004;
 scene.add(key);
-const fill = new THREE.DirectionalLight(0x7ec8ff, 0.35);
+const fill = new THREE.DirectionalLight(0x7ec8ff, 0.38);
 fill.position.set(-2.2, 1.4, -1.8);
 scene.add(fill);
+const rim = new THREE.DirectionalLight(0xb8ecff, 0.32);
+rim.position.set(-0.6, 1.1, 2.6);
+scene.add(rim);
 
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(4.5, 72),
@@ -170,7 +177,7 @@ const soft = new SoftCylinder({
   heightSegs: 11,
   rings: 3,
   softness: 0.55,
-  damping: 0.18,
+  damping: 0.26,
   gravity: -7.2,
 });
 
@@ -220,7 +227,7 @@ previewSlice.visible = false;
 scene.add(previewHole, previewSphere, previewSlice);
 
 let editMode = false;
-let currentTool = "hole";
+let currentTool = "sculpt";
 
 const fingerMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1, 32, 24),
@@ -254,7 +261,11 @@ const _hitN = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _cross = new THREE.Vector3();
 const _com = new THREE.Vector3();
+const _radial = new THREE.Vector3();
+const _sculptLast = new THREE.Vector3();
 let uiGuardUntil = 0;
+let sculpting = false;
+let sculptYNorm = 0.5;
 
 function guardUi(event) {
   if (event) {
@@ -282,17 +293,26 @@ function setPointer(event) {
   pointer.y = -((src.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
-function hitWallNorm(hit) {
+function hitCylCoord(hit, component, fallback) {
   const attr = gelGeom.getAttribute("restCyl");
   const face = hit.face;
-  if (!face || !attr) return 1;
+  if (!face || !attr) return fallback;
   const bary = hit.barycoord;
-  if (!bary) return 1;
+  if (!bary) return fallback;
+  const getter = component === 2 ? "getZ" : component === 1 ? "getY" : "getX";
   return (
-    attr.getX(face.a) * bary.x +
-    attr.getX(face.b) * bary.y +
-    attr.getX(face.c) * bary.z
+    attr[getter](face.a) * bary.x +
+    attr[getter](face.b) * bary.y +
+    attr[getter](face.c) * bary.z
   );
+}
+
+function hitWallNorm(hit) {
+  return hitCylCoord(hit, 0, 1);
+}
+
+function hitYNorm(hit, fallback) {
+  return hitCylCoord(hit, 2, fallback);
 }
 
 function isFrontHit(hit) {
@@ -341,11 +361,12 @@ function restFromHit(hit) {
       .addScaledVector(_restA, bary.x)
       .addScaledVector(_restB, bary.y)
       .addScaledVector(_restC, bary.z);
+    const yFromRest = (restHit.y - soft.floorY) / soft.height;
     return {
       x: restHit.x,
       y: restHit.y,
       z: restHit.z,
-      yNorm: (restHit.y - soft.floorY) / soft.height,
+      yNorm: hitYNorm(hit, yFromRest),
     };
   }
   const i = soft.closestParticle(hit.point.x, hit.point.y, hit.point.z, false);
@@ -427,9 +448,33 @@ function hidePreviews() {
   previewSlice.visible = false;
 }
 
+function sculptBrush() {
+  const t = Number(toolSizeEl.value) / 100;
+  return 0.07 + t * 0.3;
+}
+
+function gelAxisY(out) {
+  out.set(soft.orientR[1], soft.orientR[4], soft.orientR[7]);
+  if (out.lengthSq() < 1e-8) out.set(0, 1, 0);
+  return out.normalize();
+}
+
+function restRadial(rest, out) {
+  gelAxisY(_axis);
+  _com.set(soft.restCom[0], soft.restCom[1], soft.restCom[2]);
+  out.set(rest.x - _com.x, rest.y - _com.y, rest.z - _com.z);
+  out.addScaledVector(_axis, -out.dot(_axis));
+  if (out.lengthSq() < 1e-8) {
+    camera.getWorldDirection(camDir);
+    out.crossVectors(_axis, camDir);
+    if (out.lengthSq() < 1e-8) out.set(1, 0, 0);
+  }
+  return out.normalize();
+}
+
 function updatePreview(rest) {
   hidePreviews();
-  if (!editMode || !rest) return;
+  if (!editMode || !rest || currentTool === "sculpt") return;
   const r = toolRadius();
   if (currentTool === "hole") {
     const op = makeHoleOp(rest, true, r);
@@ -453,6 +498,7 @@ function updatePreview(rest) {
 }
 
 function applyTool(rest) {
+  if (currentTool === "sculpt") return;
   const r = toolRadius();
   let op = null;
   if (currentTool === "hole") op = makeHoleOp(rest, true, r);
@@ -461,6 +507,32 @@ function applyTool(rest) {
   carveSet.push(op);
   carveSet.applyToSoft(soft);
   meshDirty = true;
+}
+
+function beginSculpt(info) {
+  sculpting = true;
+  interacting = true;
+  meshDirty = true;
+  controls.enabled = false;
+  sculptYNorm = info.rest.yNorm;
+  restRadial(info.rest, _radial);
+  hitPoint.copy(info.point);
+  camera.getWorldDirection(camDir);
+  grabPlane.setFromNormalAndCoplanarPoint(camDir, info.point);
+  _sculptLast.copy(info.point);
+  canvas.style.cursor = "ew-resize";
+}
+
+function moveSculpt() {
+  camera.getWorldDirection(camDir);
+  grabPlane.normal.copy(camDir);
+  if (!raycaster.ray.intersectPlane(grabPlane, planeHit)) return;
+  const delta = _pick.copy(planeHit).sub(_sculptLast).dot(_radial);
+  _sculptLast.copy(planeHit);
+  if (Math.abs(delta) < 1e-5) return;
+  if (soft.sculptRadius(sculptYNorm, delta * 0.92, sculptBrush())) {
+    meshDirty = true;
+  }
 }
 
 function beginInteract(event) {
@@ -476,6 +548,10 @@ function beginInteract(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
   if (editMode) {
+    if (currentTool === "sculpt") {
+      beginSculpt(info);
+      return;
+    }
     applyTool(info.rest);
     updatePreview(info.rest);
     return;
@@ -489,14 +565,25 @@ function beginInteract(event) {
   camera.getWorldDirection(camDir);
   grabPlane.setFromNormalAndCoplanarPoint(camDir, p);
   const idx = soft.closestParticle(p.x, p.y, p.z, true);
-  soft.grabParticle(idx, p.x, p.y, p.z);
-  soft.attachFinger(p.x, p.y, p.z, 0.11);
-  fingerMesh.position.copy(p);
-  fingerMesh.scale.setScalar(0.11);
-  fingerMesh.visible = true;
+  const body = isBodyGrabHeight(info.rest.yNorm);
+  soft.grabParticle(idx, p.x, p.y, p.z, body);
+  if (body) {
+    fingerMesh.visible = false;
+  } else {
+    soft.attachFinger(p.x, p.y, p.z, 0.11);
+    fingerMesh.position.copy(p);
+    fingerMesh.scale.setScalar(0.11);
+    fingerMesh.visible = true;
+  }
 }
 
 function moveInteract(event) {
+  if (sculpting) {
+    setPointer(event);
+    raycaster.setFromCamera(pointer, camera);
+    moveSculpt();
+    return;
+  }
   if (!interacting) return;
   setPointer(event);
   raycaster.setFromCamera(pointer, camera);
@@ -504,12 +591,25 @@ function moveInteract(event) {
   grabPlane.normal.copy(camDir);
   if (raycaster.ray.intersectPlane(grabPlane, planeHit)) {
     soft.moveGrab(planeHit.x, planeHit.y, planeHit.z);
-    soft.moveFinger(planeHit.x, planeHit.y, planeHit.z);
-    fingerMesh.position.copy(planeHit);
+    if (soft.fingerActive) {
+      soft.moveFinger(planeHit.x, planeHit.y, planeHit.z);
+      fingerMesh.position.copy(planeHit);
+    }
   }
 }
 
 function endInteract() {
+  if (sculpting) {
+    sculpting = false;
+    interacting = false;
+    controls.enabled = true;
+    canvas.style.cursor = editMode
+      ? currentTool === "sculpt"
+        ? "ew-resize"
+        : "crosshair"
+      : "default";
+    return;
+  }
   if (!interacting) return;
   interacting = false;
   controls.enabled = true;
@@ -528,7 +628,7 @@ canvas.addEventListener("pointermove", (event) => {
   raycaster.setFromCamera(pointer, camera);
   const info = pickGelInfo();
   if (editMode) {
-    canvas.style.cursor = info ? "crosshair" : "default";
+    canvas.style.cursor = !info ? "default" : currentTool === "sculpt" ? "ew-resize" : "crosshair";
     updatePreview(info ? info.rest : null);
   } else {
     hidePreviews();
@@ -633,7 +733,22 @@ function doReset() {
   meshDirty = true;
 }
 
+function doFullReset() {
+  pinEl.checked = false;
+  carveSet.clear();
+  soft.fullReset();
+  rebuildGelVisual();
+  focusCameraForShape();
+  shapeOut.textContent = GEL_SHAPES[soft.shape] || "圆柱";
+  document.querySelectorAll("[data-shape]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.shape === soft.shape);
+  });
+  syncAxisInputs();
+  meshDirty = true;
+}
+
 document.querySelector("#reset").addEventListener("click", doReset);
+fullResetEl.addEventListener("click", doFullReset);
 document.querySelector("#drop").addEventListener("click", () => {
   if (editMode) return;
   pinEl.checked = false;
@@ -671,11 +786,11 @@ function setEditMode(on) {
   if (on) {
     soft.reset();
     meshDirty = true;
-    hintEl.textContent = "胶已固定。用左上角打洞 / 切削 / 裁切，不必打开设置栏。";
-    canvas.style.cursor = "crosshair";
+    hintEl.textContent = "胶已固定。塑形像拉坯：左右拖改这一圈粗细。打洞 / 切削 / 裁切仍可用。";
+    canvas.style.cursor = currentTool === "sculpt" ? "ew-resize" : "crosshair";
   } else {
     hidePreviews();
-    hintEl.textContent = "空心软胶，可从开口看到内壁。拖拽揉捏壁面；XYZ 调方向，重置只回正姿态。";
+    hintEl.textContent = "复位只回正。重置清空形态、方向和雕刻。捏中部搬整根胶，捏两端可揉。点方向展开 XYZ。";
     canvas.style.cursor = "default";
     soft.sleeping = false;
     meshDirty = true;
@@ -684,7 +799,8 @@ function setEditMode(on) {
 
 function refreshToolSizeLabel() {
   const v = Number(toolSizeEl.value);
-  toolSizeOut.textContent = v < 30 ? "小" : v < 65 ? "中" : "大";
+  const size = v < 30 ? "小" : v < 65 ? "中" : "大";
+  toolSizeOut.textContent = currentTool === "sculpt" ? `笔触 ${size}` : size;
 }
 
 modeSimEl.addEventListener("pointerdown", (event) => {
@@ -698,13 +814,28 @@ modeEditEl.addEventListener("pointerdown", (event) => {
 document.querySelector("#quickBar").addEventListener("pointerdown", (event) => {
   guardUi(event);
 });
-quickReset.addEventListener("pointerdown", (event) => {
+quickPose.addEventListener("pointerdown", (event) => {
   guardUi(event);
   doReset();
+});
+quickReset.addEventListener("pointerdown", (event) => {
+  guardUi(event);
+  doFullReset();
 });
 quickFix.addEventListener("pointerdown", (event) => {
   guardUi(event);
   setEditMode(!editMode);
+});
+
+function setAxisPadOpen(open) {
+  axisPad.hidden = !open;
+  axisToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  axisToggle.classList.toggle("active", open);
+}
+
+axisToggle.addEventListener("pointerdown", (event) => {
+  guardUi(event);
+  setAxisPadOpen(axisPad.hidden);
 });
 
 function readAxisInputs() {
@@ -775,6 +906,8 @@ document.querySelectorAll("[data-tool]").forEach((btn) => {
     document.querySelectorAll("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === currentTool);
     });
+    refreshToolSizeLabel();
+    hidePreviews();
   });
 });
 document.querySelector("#undoCarve").addEventListener("click", () => {

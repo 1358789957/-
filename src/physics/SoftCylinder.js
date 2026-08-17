@@ -31,6 +31,11 @@ export function wrapDeg(v) {
   return d === -180 ? 180 : d;
 }
 
+/** Mid-height grab moves the whole gel instead of pinching one point. */
+export function isBodyGrabHeight(yNorm) {
+  return yNorm > 0.28 && yNorm < 0.72;
+}
+
 function mulMat3(a, b, out) {
   const r0 = a[0] * b[0] + a[1] * b[3] + a[2] * b[6];
   const r1 = a[0] * b[1] + a[1] * b[4] + a[2] * b[7];
@@ -212,8 +217,9 @@ function polarRotation(A, R) {
 function blendRotation(prev, next) {
   const axisDot =
     prev[0] * next[0] + prev[4] * next[4] + prev[8] * next[8];
-  if (axisDot >= 0.12) return;
-  for (let i = 0; i < 9; i++) next[i] = prev[i] * 0.6 + next[i] * 0.4;
+  if (axisDot >= 0.42) return;
+  const t = axisDot < 0 ? 0.18 : 0.32;
+  for (let i = 0; i < 9; i++) next[i] = prev[i] * (1 - t) + next[i] * t;
 }
 
 function tetVolume(pos, i, j, k, l) {
@@ -246,7 +252,7 @@ export class SoftCylinder {
     heightSegs = 10,
     rings = 3,
     softness = 0.55,
-    damping = 0.22,
+    damping = 0.26,
     gravity = -7.2,
   } = {}) {
     this.radius = radius;
@@ -256,11 +262,12 @@ export class SoftCylinder {
     this.H = heightSegs + 1;
     this.rings = rings;
     this.innerRatio = 0.64;
+    this.profileAdd = new Float32Array(this.H);
     this.softness = softness;
     this.damping = damping;
     this.gravity = gravity;
     this.floorY = 0.06;
-    this.baseStick = 0.42;
+    this.baseStick = 0.62;
     this.particleRadius = 0.016;
     this.substeps = 3;
     this.iterations = 6;
@@ -277,9 +284,11 @@ export class SoftCylinder {
     this.fingerActive = false;
     this.finger = { x: 0, y: 0, z: 0, radius: 0.14 };
     this.grabIndex = -1;
+    this.grabBody = false;
     this.grabX = 0;
     this.grabY = 0;
     this.grabZ = 0;
+    this.grounded = false;
 
     this._buildParticles();
     this._buildConstraints();
@@ -287,7 +296,7 @@ export class SoftCylinder {
 
     this.kinetic = 0;
     this.sleeping = false;
-    this.sleepThreshold = 4e-5;
+    this.sleepThreshold = 1.4e-4;
   }
 
   ringIndex(r, h, a) {
@@ -397,6 +406,7 @@ export class SoftCylinder {
       out[0] = s * Math.cos(theta) * r;
       out[1] = cy - Math.cos(phi) * r;
       out[2] = s * Math.sin(theta) * r;
+      this._applyProfile(out, yn);
       return out;
     }
 
@@ -405,7 +415,68 @@ export class SoftCylinder {
     out[0] = Math.cos(theta) * rad;
     out[1] = y0 + yn * this.height;
     out[2] = Math.sin(theta) * rad;
+    this._applyProfile(out, yn);
     return out;
+  }
+
+  _profileAt(yNorm) {
+    const H = this.H;
+    if (!this.profileAdd || H < 2) return 0;
+    const hf = clamp(yNorm, 0, 1) * (H - 1);
+    const h0 = Math.floor(hf);
+    const h1 = Math.min(h0 + 1, H - 1);
+    const t = hf - h0;
+    return this.profileAdd[h0] * (1 - t) + this.profileAdd[h1] * t;
+  }
+
+  _applyProfile(out, yNorm) {
+    const add = this._profileAt(yNorm);
+    if (Math.abs(add) < 1e-6) return;
+    let cx = 0;
+    let cy = out[1];
+    let cz = 0;
+    if (this.shape === "sphere") {
+      cy = this.floorY + this.sphereRadius();
+    }
+    const qx = out[0] - cx;
+    const qy = out[1] - cy;
+    const qz = out[2] - cz;
+    const len = Math.hypot(qx, qy, qz);
+    if (len < 1e-5) return;
+    if (this.shape === "sphere") {
+      const next = Math.max(0.03, len + add);
+      const s = next / len;
+      out[0] = cx + qx * s;
+      out[1] = cy + qy * s;
+      out[2] = cz + qz * s;
+      return;
+    }
+    const rad = Math.hypot(qx, qz);
+    if (rad < 1e-5) return;
+    const next = Math.max(0.02, rad + add);
+    const s = next / rad;
+    out[0] = cx + qx * s;
+    out[2] = cz + qz * s;
+  }
+
+  sculptRadius(yNorm, delta, brush = 0.18) {
+    const H = this.H;
+    const height = this.height;
+    let changed = 0;
+    for (let h = 0; h < H; h++) {
+      const yn = h / (H - 1);
+      const d = (yn - yNorm) * height;
+      const w = Math.exp(-(d * d) / (brush * brush));
+      const next = clamp(this.profileAdd[h] + delta * w, -0.22, 0.52);
+      changed += Math.abs(next - this.profileAdd[h]);
+      this.profileAdd[h] = next;
+    }
+    if (changed < 1e-6) return false;
+    this._applyRestShape();
+    this._refreshConstraintRests();
+    if (this.qRest) this._rebuildShapeRest();
+    this.reset();
+    return true;
   }
 
   _applyRestShape() {
@@ -581,6 +652,7 @@ export class SoftCylinder {
     const next = GEL_SHAPES[name] ? name : "cylinder";
     if (next === this.shape) return false;
     this.shape = next;
+    if (this.profileAdd) this.profileAdd.fill(0);
     this._applyRestShape();
     this._refreshConstraintRests();
     this._rebuildShapeRest();
@@ -741,8 +813,8 @@ export class SoftCylinder {
     const structural = lerp(1.1e-5, 0.02, Math.pow(s, 1.22));
     const shear = structural * lerp(1.35, 2.05, s);
     const bend = structural * lerp(2.6, 4.6, s);
-    const volume = lerp(3.5e-7, 9e-5, Math.pow(s, 1.45));
-    this.shapeStiffness = lerp(0.4, 0.13, s);
+    const volume = lerp(4e-7, 8e-5, Math.pow(s, 1.4));
+    this.shapeStiffness = lerp(0.22, 0.06, s);
 
     const kindComp = [structural, shear, bend];
     for (let i = 0; i < this.distComp.length; i++) {
@@ -811,6 +883,24 @@ export class SoftCylinder {
     if (this.pinBottom) this.setPinBottom(true);
   }
 
+  fullReset() {
+    this.shape = "cylinder";
+    if (this.profileAdd) this.profileAdd.fill(0);
+    this.orientDeg.x = 0;
+    this.orientDeg.y = 0;
+    this.orientDeg.z = 0;
+    this.zeroR.set([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    this.carved.fill(0);
+    for (let i = 0; i < this.count; i++) {
+      if (this.mass[i] > 0) this.invMass[i] = 1 / this.mass[i];
+    }
+    this.pinBottom = false;
+    this._applyRestShape();
+    this._refreshConstraintRests();
+    this._rebuildShapeRest();
+    this.reset();
+  }
+
   drop(height = 1.15) {
     this.reset();
     for (let i = 0; i < this.count; i++) {
@@ -841,10 +931,12 @@ export class SoftCylinder {
   releaseFinger() {
     this.fingerActive = false;
     this.grabIndex = -1;
+    this.grabBody = false;
   }
 
-  grabParticle(index, x, y, z) {
+  grabParticle(index, x, y, z, body = false) {
     this.grabIndex = index;
+    this.grabBody = !!body;
     this.grabX = x;
     this.grabY = y;
     this.grabZ = z;
@@ -1140,14 +1232,24 @@ export class SoftCylinder {
     }
   }
 
+  _groundedCount() {
+    const { pos, invMass, carved, count, floorY } = this;
+    let n = 0;
+    for (let i = 0; i < count; i++) {
+      if (invMass[i] <= 0 || carved[i]) continue;
+      if (pos[i * 3 + 1] <= floorY + 0.028) n += 1;
+    }
+    return n;
+  }
+
   _applyFloorFriction() {
     const { pos, prev, invMass, count, floorY } = this;
-    const kinetic = lerp(0.22, 0.5, 1 - this.softness);
-    const staticThresh = lerp(0.0022, 0.0004, this.softness);
+    const kinetic = lerp(0.7, 0.9, 1 - this.softness);
+    const staticThresh = lerp(0.007, 0.0022, this.softness);
     for (let i = 0; i < count; i++) {
       if (invMass[i] <= 0) continue;
       const o = i * 3;
-      if (pos[o + 1] > floorY + 0.04) continue;
+      if (pos[o + 1] > floorY + 0.034) continue;
       const dx = pos[o] - prev[o];
       const dz = pos[o + 2] - prev[o + 2];
       const tang = Math.hypot(dx, dz);
@@ -1161,38 +1263,69 @@ export class SoftCylinder {
     }
   }
 
+  _lockGroundedCom(prevCom) {
+    if (this.grabBody || this.grabIndex >= 0) return;
+    if (this._groundedCount() < 3) return;
+    this._computeCom(this.pos, this.com);
+    const dx = prevCom[0] - this.com[0];
+    const dz = prevCom[2] - this.com[2];
+    const dy = Math.min(0, prevCom[1] - this.com[1]);
+    if (dx * dx + dy * dy + dz * dz < 1e-12) return;
+    const { pos, invMass, carved, count } = this;
+    for (let i = 0; i < count; i++) {
+      if (invMass[i] <= 0 || carved[i]) continue;
+      const o = i * 3;
+      pos[o] += dx;
+      pos[o + 1] += dy;
+      pos[o + 2] += dz;
+    }
+    this.com[0] = prevCom[0];
+    this.com[1] += dy;
+    this.com[2] = prevCom[2];
+  }
+
   _shapeMatch() {
     let k = this.shapeStiffness;
-    if (this.fingerActive || this.grabIndex >= 0) k *= 0.2;
+    if (this.fingerActive || this.grabIndex >= 0) k *= this.grabBody ? 0.04 : 0.16;
+    const grounded = this._groundedCount() >= 3;
+    const sitStill = grounded && !this.grabBody && this.grabIndex < 0 && !this.fingerActive;
+    if (sitStill) k *= 0.22;
     if (k < 1e-4) return;
 
     const { pos, invMass, carved, count, qRest, mass, Amat, Rmat, lastR, com } =
       this;
     this._computeCom(pos, com);
-    Amat.fill(0);
-    for (let i = 0; i < count; i++) {
-      if (carved[i]) continue;
-      const o = i * 3;
-      const m = mass[i];
-      const px = pos[o] - com[0];
-      const py = pos[o + 1] - com[1];
-      const pz = pos[o + 2] - com[2];
-      const qx = qRest[o];
-      const qy = qRest[o + 1];
-      const qz = qRest[o + 2];
-      Amat[0] += m * px * qx;
-      Amat[1] += m * px * qy;
-      Amat[2] += m * px * qz;
-      Amat[3] += m * py * qx;
-      Amat[4] += m * py * qy;
-      Amat[5] += m * py * qz;
-      Amat[6] += m * pz * qx;
-      Amat[7] += m * pz * qy;
-      Amat[8] += m * pz * qz;
+    const holdX = com[0];
+    const holdY = com[1];
+    const holdZ = com[2];
+    if (sitStill) {
+      Rmat.set(lastR);
+    } else {
+      Amat.fill(0);
+      for (let i = 0; i < count; i++) {
+        if (carved[i]) continue;
+        const o = i * 3;
+        const m = mass[i];
+        const px = pos[o] - com[0];
+        const py = pos[o + 1] - com[1];
+        const pz = pos[o + 2] - com[2];
+        const qx = qRest[o];
+        const qy = qRest[o + 1];
+        const qz = qRest[o + 2];
+        Amat[0] += m * px * qx;
+        Amat[1] += m * px * qy;
+        Amat[2] += m * px * qz;
+        Amat[3] += m * py * qx;
+        Amat[4] += m * py * qy;
+        Amat[5] += m * py * qz;
+        Amat[6] += m * pz * qx;
+        Amat[7] += m * pz * qy;
+        Amat[8] += m * pz * qz;
+      }
+      polarRotation(Amat, Rmat);
+      blendRotation(lastR, Rmat);
+      lastR.set(Rmat);
     }
-    polarRotation(Amat, Rmat);
-    blendRotation(lastR, Rmat);
-    lastR.set(Rmat);
     this.upright = Math.abs(Rmat[4]);
 
     const r00 = Rmat[0];
@@ -1219,6 +1352,9 @@ export class SoftCylinder {
       pos[o + 1] += (gy - pos[o + 1]) * k;
       pos[o + 2] += (gz - pos[o + 2]) * k;
     }
+    if (grounded && !this.grabBody) {
+      this._lockGroundedCom([holdX, holdY, holdZ]);
+    }
   }
 
   _preventWallFlip() {
@@ -1234,13 +1370,17 @@ export class SoftCylinder {
         const rx = rest[io] - rest[oo];
         const ry = rest[io + 1] - rest[oo + 1];
         const rz = rest[io + 2] - rest[oo + 2];
+        const R = this.lastR;
+        const wx = R[0] * rx + R[1] * ry + R[2] * rz;
+        const wy = R[3] * rx + R[4] * ry + R[5] * rz;
+        const wz = R[6] * rx + R[7] * ry + R[8] * rz;
         const px = pos[io] - pos[oo];
         const py = pos[io + 1] - pos[oo + 1];
         const pz = pos[io + 2] - pos[oo + 2];
-        if (rx * px + ry * py + rz * pz >= -1e-6) continue;
-        pos[io] = pos[oo] + rx * 0.55;
-        pos[io + 1] = pos[oo + 1] + ry * 0.55;
-        pos[io + 2] = pos[oo + 2] + rz * 0.55;
+        if (wx * px + wy * py + wz * pz >= -1e-6) continue;
+        pos[io] = pos[oo] + wx * 0.55;
+        pos[io + 1] = pos[oo + 1] + wy * 0.55;
+        pos[io + 2] = pos[oo + 2] + wz * 0.55;
       }
     }
   }
@@ -1248,6 +1388,24 @@ export class SoftCylinder {
   _solveCollisions() {
     this._projectFloor();
     const { pos, invMass, count, particleRadius } = this;
+
+    if (this.grabBody && this.grabIndex >= 0) {
+      const o = this.grabIndex * 3;
+      const dx = this.grabX - pos[o];
+      const dy = this.grabY - pos[o + 1];
+      const dz = this.grabZ - pos[o + 2];
+      if (dx * dx + dy * dy + dz * dz > 1e-14) {
+        for (let i = 0; i < count; i++) {
+          if (invMass[i] <= 0) continue;
+          const p = i * 3;
+          pos[p] += dx;
+          pos[p + 1] += dy;
+          pos[p + 2] += dz;
+        }
+      }
+      this._projectFloor();
+      return;
+    }
 
     if (this.fingerActive) {
       const fx = this.finger.x;
@@ -1333,11 +1491,18 @@ export class SoftCylinder {
         this._solveCollisions();
       }
       this._solveCollisions();
-      this._preventWallFlip();
+      this._computeCom(pos, this.com);
+      const holdX = this.com[0];
+      const holdY = this.com[1];
+      const holdZ = this.com[2];
+      const sitting =
+        !this.fingerActive && !this.grabBody && this.grabIndex < 0 && this._groundedCount() >= 3;
+      if (!sitting) this._preventWallFlip();
       this._shapeMatch();
-      if (!this.fingerActive && this.grabIndex < 0) this._shapeMatch();
+      if (!sitting && !this.fingerActive && this.grabIndex < 0) this._shapeMatch();
       this._projectFloor();
       this._applyFloorFriction();
+      if (sitting) this._lockGroundedCom([holdX, holdY, holdZ]);
       this._syncCarved();
 
       const maxSpeed = 10;
@@ -1362,11 +1527,39 @@ export class SoftCylinder {
         vel[o] = vx;
         vel[o + 1] = vy;
         vel[o + 2] = vz;
-        energy += vx * vx + vy * vy + vz * vz;
+        if (sitting) {
+          vel[o] *= 0.84;
+          vel[o + 1] *= 0.9;
+          vel[o + 2] *= 0.84;
+        }
+        energy += vel[o] * vel[o] + vel[o + 1] * vel[o + 1] + vel[o + 2] * vel[o + 2];
       }
     }
 
     this.kinetic = energy / (count * sub);
+    this.grounded = this._groundedCount() >= 3;
+    if (this.grounded && !this.grabBody && this.grabIndex < 0) {
+      let vx = 0;
+      let vz = 0;
+      let w = 0;
+      for (let i = 0; i < count; i++) {
+        if (this.invMass[i] <= 0 || this.carved[i]) continue;
+        const m = this.mass[i];
+        vx += this.vel[i * 3] * m;
+        vz += this.vel[i * 3 + 2] * m;
+        w += m;
+      }
+      if (w > 0) {
+        vx /= w;
+        vz /= w;
+        const kill = Math.hypot(vx, vz) < 0.14 ? 1 : 0.72;
+        for (let i = 0; i < count; i++) {
+          if (this.invMass[i] <= 0) continue;
+          this.vel[i * 3] -= vx * kill;
+          this.vel[i * 3 + 2] -= vz * kill;
+        }
+      }
+    }
     if (
       this.kinetic < this.sleepThreshold &&
       !this.fingerActive &&

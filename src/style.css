@@ -54,8 +54,18 @@ body {
 }
 
 .quick-actions button {
-  min-width: 64px;
+  min-width: 52px;
   min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(16, 20, 28, 0.82);
+  backdrop-filter: blur(12px);
+}
+
+#axisToggle {
+  width: 216px;
+  min-height: 36px;
   padding: 8px 14px;
   font-size: 14px;
   font-weight: 600;
@@ -70,6 +80,10 @@ body {
   background: rgba(16, 20, 28, 0.82);
   border: 1px solid var(--line);
   backdrop-filter: blur(12px);
+}
+
+.axis-pad[hidden] {
+  display: none;
 }
 
 .axis-row {
