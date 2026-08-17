@@ -7,14 +7,18 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title>透明软胶 · 物理模拟</title>
-    <script type="module" crossorigin src="./assets/index-DFhURKGg.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-dio16pGo.css">
+    <script type="module" crossorigin src="./assets/index-hCtJr5hv.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B4P1pQR1.css">
   </head>
   <body>
     <div id="app">
       <canvas id="c"></canvas>
-      <aside class="hud">
-        <h1>圆柱透明软胶</h1>
+      <aside class="hud" id="hud">
+        <div class="hud-bar">
+          <h1>圆柱透明软胶</h1>
+          <button type="button" id="hudToggle" aria-expanded="true">收起</button>
+        </div>
+        <div class="hud-body" id="hudBody">
         <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
 
         <div class="modes">
@@ -93,6 +97,7 @@
           <input id="pinBottom" type="checkbox" />
           固定底部
         </label>
+        </div>
       </aside>
       <div class="stats" id="stats"></div>
     </div>

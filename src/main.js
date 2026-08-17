@@ -34,6 +34,24 @@ const modeEditEl = document.querySelector("#modeEdit");
 const editPanelEl = document.querySelector("#editPanel");
 const toolSizeEl = document.querySelector("#toolSize");
 const toolSizeOut = document.querySelector("#toolSizeOut");
+const hudEl = document.querySelector("#hud");
+const hudToggle = document.querySelector("#hudToggle");
+const narrowHud = window.matchMedia("(max-width: 640px)");
+
+function setHudCollapsed(collapsed) {
+  hudEl.classList.toggle("collapsed", collapsed);
+  hudToggle.textContent = collapsed ? "设置" : "收起";
+  hudToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+}
+
+setHudCollapsed(narrowHud.matches);
+hudToggle.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setHudCollapsed(!hudEl.classList.contains("collapsed"));
+});
+narrowHud.addEventListener("change", () => {
+  if (narrowHud.matches) setHudCollapsed(true);
+});
 
 const renderer = new THREE.WebGLRenderer({
   canvas,

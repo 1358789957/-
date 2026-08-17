@@ -37,7 +37,7 @@ body {
   left: 16px;
   top: 16px;
   width: min(320px, calc(100vw - 32px));
-  padding: 16px 16px 14px;
+  padding: 12px 16px 14px;
   border-radius: 18px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -47,18 +47,38 @@ body {
   touch-action: manipulation;
 }
 
+.hud-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .hud h1 {
-  margin: 0 0 4px;
-  font-size: 17px;
+  margin: 0;
+  font-size: 16px;
   font-weight: 620;
   letter-spacing: 0.02em;
 }
 
+#hudToggle {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+}
+
 .hud p.hint {
-  margin: 0 0 14px;
+  margin: 10px 0 12px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.hud.collapsed {
+  padding-bottom: 12px;
+}
+
+.hud.collapsed .hud-body {
+  display: none;
 }
 
 .row {
@@ -207,12 +227,31 @@ button.active {
 @media (max-width: 640px) {
   .hud {
     left: 10px;
-    top: 10px;
-    padding: 12px;
+    right: 10px;
+    top: auto;
+    bottom: 10px;
+    width: auto;
+    max-height: 44vh;
+    padding: 10px 12px 12px;
+  }
+
+  .hud:not(.collapsed) .hud-body {
+    display: block;
+    max-height: calc(44vh - 48px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    margin-top: 8px;
+    padding-right: 2px;
+  }
+
+  .hud p.hint {
+    display: none;
   }
 
   .stats {
     right: 10px;
-    bottom: 10px;
+    bottom: auto;
+    top: 10px;
   }
 }
