@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>透明软胶 · v8</title>
+    <title>透明软胶 · v9</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -41,6 +41,11 @@
           </div>
           <button type="button" id="axisZero" title="把当前方向当作 0°">设为零点</button>
         </div>
+        <div class="edit-quick" id="editQuick" hidden>
+          <button type="button" data-tool="hole" class="active">打洞</button>
+          <button type="button" data-tool="carve">切削</button>
+          <button type="button" data-tool="slice">裁切</button>
+        </div>
       </div>
       <aside class="hud" id="hud">
         <div class="hud-bar">
@@ -48,7 +53,7 @@
           <button type="button" id="hudToggle" aria-expanded="true">收起</button>
         </div>
         <div class="hud-body" id="hudBody">
-        <p class="hint" id="hint">空心软胶，可从开口看到内壁。拖拽揉捏壁面；XYZ 调方向，重置只回正姿态。</p>
+        <p class="hint" id="hint">空心软胶。固定只冻结胶，不打开设置。打洞等工具在左上角。</p>
 
         <div class="row">
           <label>形态</label>

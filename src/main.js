@@ -45,10 +45,13 @@ const axisZeroEl = document.querySelector("#axisZero");
 const hudEl = document.querySelector("#hud");
 const hudToggle = document.querySelector("#hudToggle");
 const hudBar = hudEl.querySelector(".hud-bar");
-const compactHud = window.matchMedia("(max-width: 920px), (max-height: 720px)");
+const editQuickEl = document.querySelector("#editQuick");
+const compactHud = window.matchMedia(
+  "(max-width: 640px), (max-width: 920px) and (pointer: coarse)"
+);
 
 function isPhoneHud() {
-  return compactHud.matches || window.matchMedia("(pointer: coarse)").matches;
+  return compactHud.matches;
 }
 
 function setHudCollapsed(collapsed) {
@@ -67,9 +70,13 @@ function toggleHud(event) {
 }
 
 setHudCollapsed(isPhoneHud());
-hudToggle.addEventListener("pointerdown", toggleHud);
+hudToggle.addEventListener("pointerdown", (event) => {
+  guardUi(event);
+  toggleHud(event);
+});
 hudBar.addEventListener("pointerdown", (event) => {
   if (event.target.closest("#hudToggle") || event.target.closest("input,button,label")) return;
+  guardUi(event);
   toggleHud(event);
 });
 compactHud.addEventListener("change", () => {
@@ -243,6 +250,22 @@ const _restA = new THREE.Vector3();
 const _restB = new THREE.Vector3();
 const _restC = new THREE.Vector3();
 const restHit = new THREE.Vector3();
+const _hitN = new THREE.Vector3();
+const _axis = new THREE.Vector3();
+const _cross = new THREE.Vector3();
+const _com = new THREE.Vector3();
+let uiGuardUntil = 0;
+
+function guardUi(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+  }
+  uiGuardUntil = performance.now() + 450;
+}
 
 let interacting = false;
 let meshDirty = true;
@@ -259,6 +282,43 @@ function setPointer(event) {
   pointer.y = -((src.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
+function hitWallNorm(hit) {
+  const attr = gelGeom.getAttribute("restCyl");
+  const face = hit.face;
+  if (!face || !attr) return 1;
+  const bary = hit.barycoord;
+  if (!bary) return 1;
+  return (
+    attr.getX(face.a) * bary.x +
+    attr.getX(face.b) * bary.y +
+    attr.getX(face.c) * bary.z
+  );
+}
+
+function isFrontHit(hit) {
+  if (!hit.face) return true;
+  _hitN.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+  return _hitN.dot(raycaster.ray.direction) < -0.04;
+}
+
+function rayThroughCavity() {
+  if (soft.shape === "sphere") return false;
+  _axis.set(soft.orientR[1], soft.orientR[4], soft.orientR[7]);
+  if (_axis.lengthSq() < 1e-8) _axis.set(0, 1, 0);
+  _axis.normalize();
+  _com.set(soft.restCom[0], soft.restCom[1], soft.restCom[2]);
+  const ray = raycaster.ray;
+  _cross.crossVectors(ray.direction, _axis);
+  const den = _cross.length();
+  const hole = soft.radius * soft.innerRatio * 0.9;
+  if (den < 1e-5) {
+    _hitN.subVectors(ray.origin, _com).cross(_axis);
+    return _hitN.length() < hole;
+  }
+  _hitN.subVectors(ray.origin, _com);
+  return Math.abs(_hitN.dot(_cross)) / den < hole;
+}
+
 function restFromHit(hit) {
   const attr = gelGeom.getAttribute("restPos");
   const face = hit.face;
@@ -270,6 +330,7 @@ function restFromHit(hit) {
     _restC.fromBufferAttribute(pos, face.c);
     bary = new THREE.Vector3();
     THREE.Triangle.getBarycoord(hit.point, _restA, _restB, _restC, bary);
+    hit.barycoord = bary;
   }
   if (face && bary && attr) {
     _restA.fromBufferAttribute(attr, face.a);
@@ -298,13 +359,24 @@ function restFromHit(hit) {
 }
 
 function pickGelInfo() {
+  const throughHole = !editMode && rayThroughCavity();
   const meshHits = raycaster.intersectObject(gel, false);
+  let innerFallback = null;
   for (let i = 0; i < meshHits.length; i++) {
     const hit = meshHits[i];
+    if (!isFrontHit(hit)) continue;
     const rest = restFromHit(hit);
     if (carveSet.contains(rest.x, rest.y, rest.z)) continue;
+    const wall = hitWallNorm(hit);
+    if (throughHole && wall < 0.45) continue;
+    if (wall < 0.45) {
+      if (!innerFallback) innerFallback = { point: hit.point, rest, hit };
+      continue;
+    }
     return { point: hit.point, rest, hit };
   }
+  if (innerFallback && !throughHole) return innerFallback;
+  if (throughHole) return null;
   const ray = raycaster.ray;
   let best = 0.12;
   let found = null;
@@ -392,6 +464,8 @@ function applyTool(rest) {
 }
 
 function beginInteract(event) {
+  if (performance.now() < uiGuardUntil) return;
+  if (event.target && event.target !== canvas) return;
   if (event.isPrimary === false) return;
   if (event.button != null && event.button !== 0) return;
   if (event.touches && event.touches.length > 1) return;
@@ -461,16 +535,6 @@ canvas.addEventListener("pointermove", (event) => {
     canvas.style.cursor = info ? "grab" : "default";
   }
 });
-canvas.addEventListener(
-  "touchstart",
-  (e) => {
-    if (e.touches.length === 1) beginInteract(e);
-  },
-  { capture: true, passive: false }
-);
-window.addEventListener("touchmove", moveInteract, { passive: false });
-window.addEventListener("touchend", endInteract);
-window.addEventListener("touchcancel", endInteract);
 
 function softnessLabel(percent) {
   if (percent <= 28) return "硬胶";
@@ -603,12 +667,12 @@ function setEditMode(on) {
   modeEditEl.classList.toggle("active", on);
   quickFix.classList.toggle("active", on);
   editPanelEl.hidden = !on;
+  editQuickEl.hidden = !on;
   if (on) {
     soft.reset();
     meshDirty = true;
-    hintEl.textContent = "胶已固定。可对着空心壁打洞或切削。XYZ 调方向，重置只回正姿态。";
+    hintEl.textContent = "胶已固定。用左上角打洞 / 切削 / 裁切，不必打开设置栏。";
     canvas.style.cursor = "crosshair";
-    if (isPhoneHud()) setHudCollapsed(false);
   } else {
     hidePreviews();
     hintEl.textContent = "空心软胶，可从开口看到内壁。拖拽揉捏壁面；XYZ 调方向，重置只回正姿态。";
@@ -623,19 +687,23 @@ function refreshToolSizeLabel() {
   toolSizeOut.textContent = v < 30 ? "小" : v < 65 ? "中" : "大";
 }
 
-modeSimEl.addEventListener("click", () => setEditMode(false));
-modeEditEl.addEventListener("click", () => setEditMode(true));
+modeSimEl.addEventListener("pointerdown", (event) => {
+  guardUi(event);
+  setEditMode(false);
+});
+modeEditEl.addEventListener("pointerdown", (event) => {
+  guardUi(event);
+  setEditMode(true);
+});
 document.querySelector("#quickBar").addEventListener("pointerdown", (event) => {
-  event.stopPropagation();
+  guardUi(event);
 });
 quickReset.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
+  guardUi(event);
   doReset();
 });
 quickFix.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
+  guardUi(event);
   setEditMode(!editMode);
 });
 
@@ -672,8 +740,7 @@ document.querySelectorAll(".axis-step").forEach((btn) => {
   const axis = btn.dataset.axis;
   const delta = Number(btn.dataset.delta);
   btn.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+    guardUi(event);
     btn.setPointerCapture(event.pointerId);
     stepAxis(axis, delta);
     stopAxisHold();
@@ -687,8 +754,7 @@ document.querySelectorAll(".axis-step").forEach((btn) => {
 });
 
 axisZeroEl.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
+  guardUi(event);
   soft.setOrientationZero();
   syncAxisInputs();
   axisZeroEl.textContent = "已设为零点";
@@ -703,10 +769,11 @@ toolSizeEl.addEventListener("input", () => {
 });
 refreshToolSizeLabel();
 document.querySelectorAll("[data-tool]").forEach((btn) => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("pointerdown", (event) => {
+    guardUi(event);
     currentTool = btn.dataset.tool;
     document.querySelectorAll("[data-tool]").forEach((b) => {
-      b.classList.toggle("active", b === btn);
+      b.classList.toggle("active", b.dataset.tool === currentTool);
     });
   });
 });
