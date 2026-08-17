@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>透明软胶 · 物理模拟</title>
+    <script type="module" crossorigin src="./assets/index-DFhURKGg.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-dio16pGo.css">
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="c"></canvas>
+      <aside class="hud">
+        <h1>圆柱透明软胶</h1>
+        <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
+
+        <div class="modes">
+          <button type="button" id="modeSim" class="active">模拟</button>
+          <button type="button" id="modeEdit">固定模式</button>
+        </div>
+
+        <div id="editPanel" class="edit-panel" hidden>
+          <div class="presets tools">
+            <button type="button" data-tool="hole" class="active">打洞</button>
+            <button type="button" data-tool="carve">切削</button>
+            <button type="button" data-tool="slice">裁切</button>
+          </div>
+          <div class="row">
+            <label for="toolSize">道具大小</label>
+            <output id="toolSizeOut">中</output>
+          </div>
+          <input id="toolSize" type="range" min="12" max="90" value="40" />
+          <div class="actions">
+            <button type="button" id="undoCarve">撤销</button>
+            <button type="button" id="clearCarve">清除雕刻</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="softness">软度</label>
+          <output id="softnessOut">中等 55%</output>
+        </div>
+        <input id="softness" type="range" min="0" max="100" value="55" />
+        <div class="ends"><span>硬</span><span>软</span></div>
+
+        <div class="presets">
+          <button type="button" data-soft="18">硬胶</button>
+          <button type="button" data-soft="55">中等</button>
+          <button type="button" data-soft="88">超软</button>
+        </div>
+
+        <div class="row">
+          <label for="gelColor">颜色</label>
+          <output id="gelColorOut">#C8F4FF</output>
+        </div>
+        <div class="color-row">
+          <label class="color-chip" title="打开色盘">
+            <input id="gelColor" type="color" value="#c8f4ff" />
+          </label>
+          <div class="swatches" id="swatches">
+            <button type="button" data-color="#c8f4ff" style="--sw:#c8f4ff" title="冰蓝"></button>
+            <button type="button" data-color="#f4fbff" style="--sw:#f4fbff" title="透明"></button>
+            <button type="button" data-color="#ffb7d5" style="--sw:#ffb7d5" title="粉"></button>
+            <button type="button" data-color="#ffc56e" style="--sw:#ffc56e" title="琥珀"></button>
+            <button type="button" data-color="#9ef0c6" style="--sw:#9ef0c6" title="薄荷"></button>
+            <button type="button" data-color="#c5b7ff" style="--sw:#c5b7ff" title="紫"></button>
+            <button type="button" data-color="#ff8a7a" style="--sw:#ff8a7a" title="珊瑚"></button>
+            <button type="button" data-color="#d4d8e0" style="--sw:#d4d8e0" title="烟灰"></button>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="damping">阻尼</label>
+          <output id="dampingOut">22%</output>
+        </div>
+        <input id="damping" type="range" min="4" max="80" value="22" />
+
+        <div class="row">
+          <label for="gravity">重力</label>
+          <output id="gravityOut">7.2</output>
+        </div>
+        <input id="gravity" type="range" min="0" max="140" value="72" />
+
+        <div class="actions">
+          <button type="button" id="reset">复位</button>
+          <button type="button" id="drop">抛落</button>
+          <button type="button" id="poke">轻弹</button>
+        </div>
+        <label class="check">
+          <input id="pinBottom" type="checkbox" />
+          固定底部
+        </label>
+      </aside>
+      <div class="stats" id="stats"></div>
+    </div>
+  </body>
+</html>

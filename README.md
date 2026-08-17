@@ -2,6 +2,15 @@
 
 洁具售卖仓库中的交互演示：一根圆柱形透明软胶，用 XPBD 软体求解，可实时调节软度。
 
+## 手机预览
+
+构建后的页面在 `docs/`，推送到 GitHub 后可用下面地址直接打开（不用装环境）：
+
+- https://raw.githack.com/1358789957/-/cursor/soft-gel-physics-22b6/docs/index.html
+- https://cdn.jsdelivr.net/gh/1358789957/-@cursor/soft-gel-physics-22b6/docs/index.html
+
+若要变成仓库自带的 GitHub Pages 地址 `https://1358789957.github.io/-/`：仓库 Settings → Pages → Build and deployment → Source 选 **Deploy from a branch**，Branch 选 `cursor/soft-gel-physics-22b6`，Folder 选 `/docs`，保存后等一两分钟。
+
 ## 功能
 
 - 透明凝胶材质（透射、折射、清漆高光）
