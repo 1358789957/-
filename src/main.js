@@ -34,6 +34,8 @@ const modeEditEl = document.querySelector("#modeEdit");
 const editPanelEl = document.querySelector("#editPanel");
 const toolSizeEl = document.querySelector("#toolSize");
 const toolSizeOut = document.querySelector("#toolSizeOut");
+const quickReset = document.querySelector("#quickReset");
+const quickFix = document.querySelector("#quickFix");
 const hudEl = document.querySelector("#hud");
 const hudToggle = document.querySelector("#hudToggle");
 const hudBar = hudEl.querySelector(".hud-bar");
@@ -499,10 +501,12 @@ gravityEl.addEventListener("input", () => {
   soft.setGravity(-g);
 });
 pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
-document.querySelector("#reset").addEventListener("click", () => {
+function doReset() {
   soft.reset();
   meshDirty = true;
-});
+}
+
+document.querySelector("#reset").addEventListener("click", doReset);
 document.querySelector("#drop").addEventListener("click", () => {
   if (editMode) return;
   pinEl.checked = false;
@@ -533,12 +537,14 @@ function setEditMode(on) {
   editMode = on;
   modeSimEl.classList.toggle("active", !on);
   modeEditEl.classList.toggle("active", on);
+  quickFix.classList.toggle("active", on);
   editPanelEl.hidden = !on;
   if (on) {
     soft.reset();
     meshDirty = true;
     hintEl.textContent = "胶已固定。点在胶上使用道具：打洞贯穿、切削挖块、裁切切掉一侧。空白处仍可旋转。";
     canvas.style.cursor = "crosshair";
+    if (isPhoneHud()) setHudCollapsed(false);
   } else {
     hidePreviews();
     hintEl.textContent = "拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。";
@@ -555,6 +561,19 @@ function refreshToolSizeLabel() {
 
 modeSimEl.addEventListener("click", () => setEditMode(false));
 modeEditEl.addEventListener("click", () => setEditMode(true));
+document.querySelector("#quickBar").addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+quickReset.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  doReset();
+});
+quickFix.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  setEditMode(!editMode);
+});
 toolSizeEl.addEventListener("input", () => {
   refreshToolSizeLabel();
 });
