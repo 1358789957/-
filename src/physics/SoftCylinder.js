@@ -1,8 +1,7 @@
 /**
- * XPBD soft gel on a structured lattice (center column + concentric rings).
- * Rest positions can be a cylinder, sphere, prism, or grip. Constraints are
- * distance, tetrahedral volume, floor contact, and an optional finger.
- * reset() only snaps pose back to the current rest form.
+ * XPBD hollow soft gel. Particles live in the wall only (inner / mid / outer
+ * rings), never in the cavity. Rest profiles: tube, hollow sphere, prism
+ * shell, or a grip with a hollow bulb. reset() snaps pose, not form.
  */
 
 export const GEL_SHAPES = {
@@ -256,6 +255,7 @@ export class SoftCylinder {
     this.heightSegs = heightSegs;
     this.H = heightSegs + 1;
     this.rings = rings;
+    this.innerRatio = 0.64;
     this.softness = softness;
     this.damping = damping;
     this.gravity = gravity;
@@ -290,24 +290,28 @@ export class SoftCylinder {
     this.sleepThreshold = 4e-5;
   }
 
-  centerIndex(h) {
-    return h;
-  }
-
   ringIndex(r, h, a) {
     const A = this.A;
     const H = this.H;
-    return H + (r - 1) * H * A + h * A + ((a % A) + A) % A;
+    const rr = ((r % this.rings) + this.rings) % this.rings;
+    return rr * H * A + h * A + ((a % A) + A) % A;
   }
 
   indexAt(r, h, a) {
-    if (r <= 0) return this.centerIndex(h);
     return this.ringIndex(r, h, a);
+  }
+
+  outerRing() {
+    return this.rings - 1;
+  }
+
+  wallThickness() {
+    return this.radius * (1 - this.innerRatio);
   }
 
   _buildParticles() {
     const { A, H, rings, radius, height } = this;
-    const count = H + rings * H * A;
+    const count = rings * H * A;
     this.count = count;
     this.pos = new Float32Array(count * 3);
     this.prev = new Float32Array(count * 3);
@@ -318,17 +322,16 @@ export class SoftCylinder {
     this.mass = new Float32Array(count);
     this.carved = new Uint8Array(count);
 
-    const volume = Math.PI * radius * radius * height;
-    const density = 1.15;
-    const m = (density * volume) / count;
+    const inner = this.innerRatio;
+    const wallVol = Math.PI * radius * radius * (1 - inner * inner) * height;
+    const density = 1.32;
+    const m = (density * wallVol) / count;
 
-    for (let h = 0; h < H; h++) {
-      this.mass[this.centerIndex(h)] = m * 1.15;
-      this.invMass[this.centerIndex(h)] = 1 / this.mass[this.centerIndex(h)];
-      for (let r = 1; r <= rings; r++) {
+    for (let r = 0; r < rings; r++) {
+      const ringMass = r === 0 || r === rings - 1 ? m * 0.92 : m;
+      for (let h = 0; h < H; h++) {
         for (let a = 0; a < A; a++) {
           const i = this.ringIndex(r, h, a);
-          const ringMass = r === rings ? m * 0.9 : m;
           this.mass[i] = ringMass;
           this.invMass[i] = 1 / ringMass;
         }
@@ -341,80 +344,78 @@ export class SoftCylinder {
   }
 
   sphereRadius() {
-    return Math.min(this.radius * 1.45, this.height * 0.48);
+    return Math.min(this.radius * 1.42, this.height * 0.47);
+  }
+
+  prismRadius(theta, R) {
+    const n = 8;
+    const half = Math.PI / n;
+    const local = ((theta % TWO_PI) + TWO_PI) % TWO_PI;
+    const sector = local % (2 * half);
+    return (R * Math.cos(half)) / Math.max(0.2, Math.cos(sector - half));
+  }
+
+  gripOuter(yNorm) {
+    const R = this.radius;
+    const y = this.floorY + clamp(yNorm, 0, 1) * this.height;
+    const Rb = R * 0.7;
+    const cy = this.floorY + this.height - Rb;
+    const base = R * 0.5;
+    const palm = R * 0.58;
+    const neck = R * 0.4;
+    let shaft;
+    if (yNorm < 0.08) {
+      shaft = lerp(base * 1.08, base, yNorm / 0.08);
+    } else if (yNorm < 0.54) {
+      const t = (yNorm - 0.08) / 0.46;
+      shaft = base + (palm - base) * Math.sin(t * Math.PI);
+    } else {
+      shaft = lerp(base, neck, clamp((yNorm - 0.54) / 0.14, 0, 1));
+    }
+    const dy = y - cy;
+    const bulb = dy * dy <= Rb * Rb ? Math.sqrt(Rb * Rb - dy * dy) : 0;
+    return lerp(shaft, Math.max(shaft * 0.12, bulb), smoothstep(cy - Rb * 0.98, cy - Rb * 0.2, y));
+  }
+
+  outerProfile(yNorm, theta) {
+    if (this.shape === "prism") return this.prismRadius(theta, this.radius);
+    if (this.shape === "grip") return this.gripOuter(yNorm);
+    return this.radius;
   }
 
   placeRest(rNorm, theta, yNorm, out) {
-    const R = this.radius;
-    const H = this.height;
-    const y0 = this.floorY;
-    const rn = clamp(rNorm, 0, 1);
+    const w = clamp(rNorm, 0, 1);
     const yn = clamp(yNorm, 0, 1);
+    const y0 = this.floorY;
 
     if (this.shape === "sphere") {
       const Rs = this.sphereRadius();
+      const r = lerp(Rs * this.innerRatio, Rs, w);
       const phi = yn * Math.PI;
-      const ring = Rs * Math.sin(phi) * rn;
-      out[0] = Math.cos(theta) * ring;
-      out[1] = y0 + Rs * (1 - Math.cos(phi));
-      out[2] = Math.sin(theta) * ring;
+      const cy = y0 + Rs;
+      const s = Math.sin(phi);
+      out[0] = s * Math.cos(theta) * r;
+      out[1] = cy - Math.cos(phi) * r;
+      out[2] = s * Math.sin(theta) * r;
       return out;
     }
 
-    if (this.shape === "prism") {
-      const n = this.A;
-      const half = Math.PI / n;
-      const local = ((theta % TWO_PI) + TWO_PI) % TWO_PI;
-      const sector = local % (2 * half);
-      const faceR = (R * Math.cos(half)) / Math.max(0.18, Math.cos(sector - half));
-      const rr = rn * faceR;
-      out[0] = Math.cos(theta) * rr;
-      out[1] = y0 + yn * H;
-      out[2] = Math.sin(theta) * rr;
-      return out;
-    }
-
-    if (this.shape === "grip") {
-      const y = y0 + yn * H;
-      const Rb = R * 0.6;
-      const cy = y0 + H - Rb;
-      let shaft;
-      if (yn < 0.1) {
-        shaft = R * lerp(0.46, 0.42, yn / 0.1);
-      } else if (yn < 0.56) {
-        const t = (yn - 0.1) / 0.46;
-        shaft = R * (0.42 + 0.08 * Math.sin(t * Math.PI));
-      } else {
-        shaft = R * lerp(0.42, 0.38, clamp((yn - 0.56) / 0.16, 0, 1));
-      }
-      const dy = y - cy;
-      const bulb = dy * dy <= Rb * Rb ? Math.sqrt(Rb * Rb - dy * dy) : 0;
-      const rad = lerp(shaft, bulb, smoothstep(cy - Rb, cy - Rb * 0.18, y));
-      out[0] = Math.cos(theta) * rad * rn;
-      out[1] = y;
-      out[2] = Math.sin(theta) * rad * rn;
-      return out;
-    }
-
-    const rr = rn * R;
-    out[0] = Math.cos(theta) * rr;
-    out[1] = y0 + yn * H;
-    out[2] = Math.sin(theta) * rr;
+    const outer = this.outerProfile(yn, theta);
+    const rad = lerp(outer * this.innerRatio, outer, w);
+    out[0] = Math.cos(theta) * rad;
+    out[1] = y0 + yn * this.height;
+    out[2] = Math.sin(theta) * rad;
     return out;
   }
 
   _applyRestShape() {
     const { A, H, rings } = this;
     const tmp = this._placeTmp || (this._placeTmp = new Float32Array(3));
+    const denom = Math.max(1, rings - 1);
     for (let h = 0; h < H; h++) {
       const yNorm = h / (H - 1);
-      this.placeRest(0, 0, yNorm, tmp);
-      const ci = this.centerIndex(h) * 3;
-      this.rest0[ci] = tmp[0];
-      this.rest0[ci + 1] = tmp[1];
-      this.rest0[ci + 2] = tmp[2];
-      for (let r = 1; r <= rings; r++) {
-        const rNorm = r / rings;
+      for (let r = 0; r < rings; r++) {
+        const rNorm = r / denom;
         for (let a = 0; a < A; a++) {
           const theta = (a / A) * TWO_PI;
           this.placeRest(rNorm, theta, yNorm, tmp);
@@ -655,7 +656,7 @@ export class SoftCylinder {
     const BEND = 2;
 
     for (let h = 0; h < H; h++) {
-      for (let r = 1; r <= rings; r++) {
+      for (let r = 0; r < rings; r++) {
         for (let a = 0; a < A; a++) {
           const i = this.ringIndex(r, h, a);
           this._addDistance(i, this.ringIndex(r, h, a + 1), STRUCT);
@@ -664,48 +665,26 @@ export class SoftCylinder {
             this._addDistance(i, this.ringIndex(r, h + 1, a + 1), SHEAR);
             this._addDistance(i, this.ringIndex(r, h + 1, a - 1), SHEAR);
           }
-          if (r + 1 <= rings) {
+          if (r + 1 < rings) {
             this._addDistance(i, this.ringIndex(r + 1, h, a), STRUCT);
             this._addDistance(i, this.ringIndex(r + 1, h, a + 1), SHEAR);
+            if (h + 1 < H) {
+              this._addDistance(i, this.ringIndex(r + 1, h + 1, a), SHEAR);
+            }
           } else if (h + 2 < H) {
             this._addDistance(i, this.ringIndex(r, h + 2, a), BEND);
           }
-          if (r === 1) {
-            this._addDistance(i, this.centerIndex(h), STRUCT);
-            if (h + 1 < H) {
-              this._addDistance(i, this.centerIndex(h + 1), SHEAR);
-            }
+          if (a + 2 < A + 2 && (r === 0 || r === rings - 1)) {
+            this._addDistance(i, this.ringIndex(r, h, a + 2), BEND);
           }
         }
-      }
-      if (h + 1 < H) {
-        this._addDistance(this.centerIndex(h), this.centerIndex(h + 1), STRUCT);
       }
     }
 
     for (let h = 0; h < H - 1; h++) {
       for (let a = 0; a < A; a++) {
         const a1 = a + 1;
-        this._addTet(
-          this.centerIndex(h),
-          this.ringIndex(1, h, a),
-          this.ringIndex(1, h, a1),
-          this.centerIndex(h + 1)
-        );
-        this._addTet(
-          this.centerIndex(h + 1),
-          this.ringIndex(1, h, a),
-          this.ringIndex(1, h, a1),
-          this.ringIndex(1, h + 1, a)
-        );
-        this._addTet(
-          this.centerIndex(h + 1),
-          this.ringIndex(1, h, a1),
-          this.ringIndex(1, h + 1, a),
-          this.ringIndex(1, h + 1, a1)
-        );
-
-        for (let r = 1; r < rings; r++) {
+        for (let r = 0; r < rings - 1; r++) {
           this._splitHex(
             this.ringIndex(r, h, a),
             this.ringIndex(r + 1, h, a),
@@ -759,11 +738,11 @@ export class SoftCylinder {
 
   _applyMaterialParams() {
     const s = clamp(this.softness, 0, 1);
-    const structural = lerp(8e-6, 0.014, Math.pow(s, 1.35));
-    const shear = structural * lerp(1.45, 2.2, s);
-    const bend = structural * lerp(3.2, 5.5, s);
-    const volume = lerp(8e-7, 2.2e-4, Math.pow(s, 1.55));
-    this.shapeStiffness = lerp(0.62, 0.32, s);
+    const structural = lerp(1.1e-5, 0.02, Math.pow(s, 1.22));
+    const shear = structural * lerp(1.35, 2.05, s);
+    const bend = structural * lerp(2.6, 4.6, s);
+    const volume = lerp(3.5e-7, 9e-5, Math.pow(s, 1.45));
+    this.shapeStiffness = lerp(0.4, 0.13, s);
 
     const kindComp = [structural, shear, bend];
     for (let i = 0; i < this.distComp.length; i++) {
@@ -798,9 +777,9 @@ export class SoftCylinder {
     const H = this.H;
     const A = this.A;
     const rings = this.rings;
-    for (let r = 0; r <= rings; r++) {
-      for (let a = 0; a < (r === 0 ? 1 : A); a++) {
-        const i = this.indexAt(r, 0, a);
+    for (let r = 0; r < rings; r++) {
+      for (let a = 0; a < A; a++) {
+        const i = this.ringIndex(r, 0, a);
         if (pin) {
           this.invMass[i] = 0;
           const o = i * 3;
@@ -971,9 +950,13 @@ export class SoftCylinder {
       }
     };
     if (surfaceOnly) {
+      const inner = 0;
+      const outer = rings - 1;
       for (let h = 0; h < H; h++) {
-        for (let a = 0; a < A; a++) consider(this.ringIndex(rings, h, a));
-        consider(this.centerIndex(h));
+        for (let a = 0; a < A; a++) {
+          consider(this.ringIndex(outer, h, a));
+          consider(this.ringIndex(inner, h, a));
+        }
       }
     } else {
       for (let i = 0; i < count; i++) consider(i);
@@ -1180,7 +1163,7 @@ export class SoftCylinder {
 
   _shapeMatch() {
     let k = this.shapeStiffness;
-    if (this.fingerActive || this.grabIndex >= 0) k *= 0.38;
+    if (this.fingerActive || this.grabIndex >= 0) k *= 0.2;
     if (k < 1e-4) return;
 
     const { pos, invMass, carved, count, qRest, mass, Amat, Rmat, lastR, com } =
@@ -1238,6 +1221,30 @@ export class SoftCylinder {
     }
   }
 
+  _preventWallFlip() {
+    const { pos, rest, invMass, A, H, rings } = this;
+    const outer = rings - 1;
+    for (let h = 0; h < H; h++) {
+      for (let a = 0; a < A; a++) {
+        const ii = this.ringIndex(0, h, a);
+        const oi = this.ringIndex(outer, h, a);
+        if (invMass[ii] <= 0 && invMass[oi] <= 0) continue;
+        const io = ii * 3;
+        const oo = oi * 3;
+        const rx = rest[io] - rest[oo];
+        const ry = rest[io + 1] - rest[oo + 1];
+        const rz = rest[io + 2] - rest[oo + 2];
+        const px = pos[io] - pos[oo];
+        const py = pos[io + 1] - pos[oo + 1];
+        const pz = pos[io + 2] - pos[oo + 2];
+        if (rx * px + ry * py + rz * pz >= -1e-6) continue;
+        pos[io] = pos[oo] + rx * 0.55;
+        pos[io + 1] = pos[oo + 1] + ry * 0.55;
+        pos[io + 2] = pos[oo + 2] + rz * 0.55;
+      }
+    }
+  }
+
   _solveCollisions() {
     this._projectFloor();
     const { pos, invMass, count, particleRadius } = this;
@@ -1266,7 +1273,7 @@ export class SoftCylinder {
 
     if (this.grabIndex >= 0 && invMass[this.grabIndex] > 0) {
       const o = this.grabIndex * 3;
-      const mix = lerp(0.55, 0.28, this.softness);
+      const mix = lerp(0.64, 0.36, this.softness);
       pos[o] += (this.grabX - pos[o]) * mix;
       pos[o + 1] += (this.grabY - pos[o + 1]) * mix;
       pos[o + 2] += (this.grabZ - pos[o + 2]) * mix;
@@ -1326,8 +1333,9 @@ export class SoftCylinder {
         this._solveCollisions();
       }
       this._solveCollisions();
+      this._preventWallFlip();
       this._shapeMatch();
-      this._shapeMatch();
+      if (!this.fingerActive && this.grabIndex < 0) this._shapeMatch();
       this._projectFloor();
       this._applyFloorFriction();
       this._syncCarved();
@@ -1372,12 +1380,12 @@ export class SoftCylinder {
   sample(rNorm, theta, yNorm, out, field) {
     const { A, H, rings } = this;
     const pos = field || this.pos;
-    const rf = clamp(rNorm, 0, 1) * rings;
+    const rf = clamp(rNorm, 0, 1) * (rings - 1);
     const hf = clamp(yNorm, 0, 1) * (H - 1);
     const aWrap = (((theta / TWO_PI) % 1) + 1) % 1 * A;
 
     const r0 = Math.floor(rf);
-    const r1 = Math.min(r0 + 1, rings);
+    const r1 = Math.min(r0 + 1, rings - 1);
     const tr = rf - r0;
     const h0 = Math.floor(hf);
     const h1 = Math.min(h0 + 1, H - 1);
@@ -1386,7 +1394,7 @@ export class SoftCylinder {
     const a1 = (a0 + 1) % A;
     const ta = aWrap - Math.floor(aWrap);
 
-    const pick = (r, h, a) => this.indexAt(r, h, a) * 3;
+    const pick = (r, h, a) => this.ringIndex(r, h, a) * 3;
 
     const lerp3 = (ia, ib, t, dest) => {
       dest[0] = pos[ia] + (pos[ib] - pos[ia]) * t;
@@ -1398,19 +1406,8 @@ export class SoftCylinder {
     const b = this._sB || (this._sB = new Float32Array(3));
     const c = this._sC || (this._sC = new Float32Array(3));
     const d = this._sD || (this._sD = new Float32Array(3));
-    this._sA = a;
-    this._sB = b;
-    this._sC = c;
-    this._sD = d;
 
     const sampleRingLayer = (r, h, dest) => {
-      if (r <= 0) {
-        const o = pick(0, h, 0);
-        dest[0] = pos[o];
-        dest[1] = pos[o + 1];
-        dest[2] = pos[o + 2];
-        return;
-      }
       lerp3(pick(r, h, a0), pick(r, h, a1), ta, dest);
     };
 

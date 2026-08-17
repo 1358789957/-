@@ -160,14 +160,14 @@ const soft = new SoftCylinder({
   radius: 0.36,
   height: 1.42,
   radialSegs: 8,
-  heightSegs: 10,
+  heightSegs: 11,
   rings: 3,
   softness: 0.55,
-  damping: 0.22,
+  damping: 0.18,
   gravity: -7.2,
 });
 
-let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 36, capRings: 8 });
+let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 40, rimSegs: 4, caps: "rims" });
 deformGelGeometry(gelGeom, soft);
 const gelMat = createGelMaterial();
 const gel = new THREE.Mesh(gelGeom, gelMat);
@@ -308,27 +308,29 @@ function pickGelInfo() {
   const ray = raycaster.ray;
   let best = 0.12;
   let found = null;
-  const { pos, A, H, rings } = soft;
-  for (let h = 0; h < H; h++) {
-    for (let a = 0; a < A; a++) {
-      const i = soft.ringIndex(rings, h, a);
-      if (soft.carved[i]) continue;
-      _pick.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-      const d = ray.distanceToPoint(_pick);
-      if (d < best) {
-        best = d;
-        ray.closestPointToPoint(_pick, _closest);
-        hitPoint.copy(_closest);
-        const o = i * 3;
-        found = {
-          point: hitPoint,
-          rest: {
-            x: soft.rest[o],
-            y: soft.rest[o + 1],
-            z: soft.rest[o + 2],
-            yNorm: (soft.rest[o + 1] - soft.floorY) / soft.height,
-          },
-        };
+  const { pos, A, H } = soft;
+  for (const r of [soft.outerRing(), 0]) {
+    for (let h = 0; h < H; h++) {
+      for (let a = 0; a < A; a++) {
+        const i = soft.ringIndex(r, h, a);
+        if (soft.carved[i]) continue;
+        _pick.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+        const d = ray.distanceToPoint(_pick);
+        if (d < best) {
+          best = d;
+          ray.closestPointToPoint(_pick, _closest);
+          hitPoint.copy(_closest);
+          const o = i * 3;
+          found = {
+            point: hitPoint,
+            rest: {
+              x: soft.rest[o],
+              y: soft.rest[o + 1],
+              z: soft.rest[o + 2],
+              yNorm: (soft.rest[o + 1] - soft.floorY) / soft.height,
+            },
+          };
+        }
       }
     }
   }
@@ -414,9 +416,9 @@ function beginInteract(event) {
   grabPlane.setFromNormalAndCoplanarPoint(camDir, p);
   const idx = soft.closestParticle(p.x, p.y, p.z, true);
   soft.grabParticle(idx, p.x, p.y, p.z);
-  soft.attachFinger(p.x, p.y, p.z, 0.135);
+  soft.attachFinger(p.x, p.y, p.z, 0.11);
   fingerMesh.position.copy(p);
-  fingerMesh.scale.setScalar(0.135);
+  fingerMesh.scale.setScalar(0.11);
   fingerMesh.visible = true;
 }
 
@@ -501,7 +503,7 @@ pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
 function gelCapsFor(shape) {
   if (shape === "sphere") return "none";
   if (shape === "grip") return "bottom";
-  return "both";
+  return "rims";
 }
 
 function focusCameraForShape() {
@@ -515,8 +517,8 @@ function focusCameraForShape() {
 function rebuildGelVisual() {
   const next = createGelGeometry({
     radialSegs: visualRadialSegs(soft.shape),
-    heightSegs: 36,
-    capRings: 8,
+    heightSegs: 40,
+    rimSegs: 4,
     caps: gelCapsFor(soft.shape),
   });
   deformGelGeometry(next, soft);
@@ -604,12 +606,12 @@ function setEditMode(on) {
   if (on) {
     soft.reset();
     meshDirty = true;
-    hintEl.textContent = "胶已固定。左上角 XYZ 调方向，设为零点后读数归零。重置只回正姿态。";
+    hintEl.textContent = "胶已固定。可对着空心壁打洞或切削。XYZ 调方向，重置只回正姿态。";
     canvas.style.cursor = "crosshair";
     if (isPhoneHud()) setHudCollapsed(false);
   } else {
     hidePreviews();
-    hintEl.textContent = "拖拽揉捏。左上角 XYZ 调方向，可把当前角度设为零点。重置只回正姿态。";
+    hintEl.textContent = "空心软胶，可从开口看到内壁。拖拽揉捏壁面；XYZ 调方向，重置只回正姿态。";
     canvas.style.cursor = "default";
     soft.sleeping = false;
     meshDirty = true;
