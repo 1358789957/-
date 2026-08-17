@@ -109,6 +109,7 @@ export class SoftCylinder {
     this.rest = new Float32Array(count * 3);
     this.invMass = new Float32Array(count);
     this.mass = new Float32Array(count);
+    this.carved = new Uint8Array(count);
 
     const volume = Math.PI * radius * radius * height;
     const density = 1.15;
@@ -346,6 +347,8 @@ export class SoftCylinder {
           this.vel[o] = 0;
           this.vel[o + 1] = 0;
           this.vel[o + 2] = 0;
+        } else if (this.carved[i]) {
+          this.invMass[i] = 0;
         } else if (this.mass[i] > 0) {
           this.invMass[i] = 1 / this.mass[i];
         }
@@ -409,11 +412,86 @@ export class SoftCylinder {
     this.grabZ = z;
   }
 
+  applyCarvedFlags(flags) {
+    const { count, carved, invMass, mass, vel } = this;
+    carved.set(flags);
+    for (let i = 0; i < count; i++) {
+      if (carved[i]) {
+        invMass[i] = 0;
+        vel[i * 3] = 0;
+        vel[i * 3 + 1] = 0;
+        vel[i * 3 + 2] = 0;
+      } else if (this.mass[i] > 0) {
+        invMass[i] = 1 / mass[i];
+      }
+    }
+    if (this.pinBottom) this.setPinBottom(true);
+    this._syncCarved();
+    this.sleeping = false;
+  }
+
+  clearCarved() {
+    this.carved.fill(0);
+    for (let i = 0; i < this.count; i++) {
+      if (this.mass[i] > 0) this.invMass[i] = 1 / this.mass[i];
+    }
+    if (this.pinBottom) this.setPinBottom(true);
+    this.sleeping = false;
+  }
+
+  carvedCount() {
+    let n = 0;
+    for (let i = 0; i < this.count; i++) if (this.carved[i]) n += 1;
+    return n;
+  }
+
+  _syncCarved() {
+    const { pos, prev, vel, rest, carved, mass, count } = this;
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    let rx = 0;
+    let ry = 0;
+    let rz = 0;
+    let w = 0;
+    for (let i = 0; i < count; i++) {
+      if (carved[i]) continue;
+      const m = mass[i];
+      const o = i * 3;
+      cx += pos[o] * m;
+      cy += pos[o + 1] * m;
+      cz += pos[o + 2] * m;
+      rx += rest[o] * m;
+      ry += rest[o + 1] * m;
+      rz += rest[o + 2] * m;
+      w += m;
+    }
+    if (w <= 0) return;
+    const inv = 1 / w;
+    const dx = cx * inv - rx * inv;
+    const dy = cy * inv - ry * inv;
+    const dz = cz * inv - rz * inv;
+    for (let i = 0; i < count; i++) {
+      if (!carved[i]) continue;
+      const o = i * 3;
+      pos[o] = rest[o] + dx;
+      pos[o + 1] = rest[o + 1] + dy;
+      pos[o + 2] = rest[o + 2] + dz;
+      prev[o] = pos[o];
+      prev[o + 1] = pos[o + 1];
+      prev[o + 2] = pos[o + 2];
+      vel[o] = 0;
+      vel[o + 1] = 0;
+      vel[o + 2] = 0;
+    }
+  }
+
   closestParticle(x, y, z, surfaceOnly = true) {
-    const { pos, count, A, H, rings } = this;
+    const { pos, count, A, H, rings, carved } = this;
     let best = 0;
     let bestD = Infinity;
     const consider = (i) => {
+      if (carved[i]) return;
       const o = i * 3;
       const dx = pos[o] - x;
       const dy = pos[o + 1] - y;
@@ -441,6 +519,7 @@ export class SoftCylinder {
     let z = 0;
     let w = 0;
     for (let i = 0; i < this.count; i++) {
+      if (this.carved[i]) continue;
       const m = this.mass[i];
       const o = i * 3;
       x += src[o] * m;
@@ -468,6 +547,7 @@ export class SoftCylinder {
     for (let c = 0; c < n; c++) {
       const i = distI[c];
       const j = distJ[c];
+      if (this.carved[i] || this.carved[j]) continue;
       const wi = invMass[i];
       const wj = invMass[j];
       const w = wi + wj;
@@ -514,6 +594,14 @@ export class SoftCylinder {
       const i2 = tetJ[c];
       const i3 = tetK[c];
       const i4 = tetL[c];
+      if (
+        this.carved[i1] ||
+        this.carved[i2] ||
+        this.carved[i3] ||
+        this.carved[i4]
+      ) {
+        continue;
+      }
       const w1 = invMass[i1];
       const w2 = invMass[i2];
       const w3 = invMass[i3];
@@ -694,7 +782,7 @@ export class SoftCylinder {
     let energy = 0;
     for (let s = 0; s < sub; s++) {
       for (let i = 0; i < count; i++) {
-        if (invMass[i] <= 0) continue;
+        if (invMass[i] <= 0 || this.carved[i]) continue;
         const o = i * 3;
         vel[o + 1] += gravity * sdt;
         prev[o] = pos[o];
@@ -715,6 +803,7 @@ export class SoftCylinder {
       }
       this._solveCollisions();
       this._applyFloorFriction();
+      this._syncCarved();
 
       const maxSpeed = 10;
       for (let i = 0; i < count; i++) {

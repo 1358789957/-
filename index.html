@@ -14,7 +14,29 @@
       <canvas id="c"></canvas>
       <aside class="hud">
         <h1>圆柱透明软胶</h1>
-        <p class="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
+        <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
+
+        <div class="modes">
+          <button type="button" id="modeSim" class="active">模拟</button>
+          <button type="button" id="modeEdit">固定模式</button>
+        </div>
+
+        <div id="editPanel" class="edit-panel" hidden>
+          <div class="presets tools">
+            <button type="button" data-tool="hole" class="active">打洞</button>
+            <button type="button" data-tool="carve">切削</button>
+            <button type="button" data-tool="slice">裁切</button>
+          </div>
+          <div class="row">
+            <label for="toolSize">道具大小</label>
+            <output id="toolSizeOut">中</output>
+          </div>
+          <input id="toolSize" type="range" min="12" max="90" value="40" />
+          <div class="actions">
+            <button type="button" id="undoCarve">撤销</button>
+            <button type="button" id="clearCarve">清除雕刻</button>
+          </div>
+        </div>
 
         <div class="row">
           <label for="softness">软度</label>

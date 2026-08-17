@@ -145,6 +145,20 @@ input[type="range"] {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
+.modes,
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.edit-panel {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
 .presets,
 .actions {
   display: flex;

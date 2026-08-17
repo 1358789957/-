@@ -83,6 +83,7 @@ export function createGelGeometry({
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("restCyl", new THREE.Float32BufferAttribute(samples, 3));
   geometry.setIndex(indices);
   geometry.userData.samples = new Float32Array(samples);
   geometry.computeVertexNormals();
@@ -150,4 +151,83 @@ export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
   });
   applyGelColor(material, hex);
   return material;
+}
+
+const CARVE_VERT = /* glsl */ `
+attribute vec3 restCyl;
+varying vec3 vRestCyl;
+`;
+
+const CARVE_VERT_MAIN = /* glsl */ `
+vRestCyl = restCyl;
+`;
+
+const CARVE_FRAG = /* glsl */ `
+varying vec3 vRestCyl;
+uniform int uCarveCount;
+uniform vec4 uCarvePos[16];
+uniform vec4 uCarveDir[16];
+uniform float uGelRadius;
+uniform float uGelHeight;
+uniform float uGelFloor;
+
+bool gelCarved(vec3 p) {
+  for (int i = 0; i < 16; i++) {
+    if (i >= uCarveCount) break;
+    int kind = int(uCarveDir[i].w);
+    if (kind == 1) {
+      vec3 w = p - uCarvePos[i].xyz;
+      vec3 axis = uCarveDir[i].xyz;
+      vec3 perp = w - axis * dot(w, axis);
+      if (dot(perp, perp) < uCarvePos[i].w * uCarvePos[i].w) return true;
+    } else if (kind == 2) {
+      vec3 w = p - uCarvePos[i].xyz;
+      if (dot(w, w) < uCarvePos[i].w * uCarvePos[i].w) return true;
+    } else if (kind == 3) {
+      if (dot(p, uCarveDir[i].xyz) > uCarvePos[i].w) return true;
+    }
+  }
+  return false;
+}
+`;
+
+const CARVE_FRAG_MAIN = /* glsl */ `
+{
+  vec3 restPos = vec3(
+    cos(vRestCyl.y) * vRestCyl.x * uGelRadius,
+    vRestCyl.z * uGelHeight + uGelFloor,
+    sin(vRestCyl.y) * vRestCyl.x * uGelRadius
+  );
+  if (gelCarved(restPos)) discard;
+}
+`;
+
+export function attachCarveShader(material, carveSet, gel) {
+  const extra = {
+    uGelRadius: { value: gel.radius },
+    uGelHeight: { value: gel.height },
+    uGelFloor: { value: gel.floorY },
+  };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, carveSet.uniforms, extra);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\n${CARVE_VERT}`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${CARVE_VERT_MAIN}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${CARVE_FRAG}`);
+    if (shader.fragmentShader.includes("#include <clipping_planes_fragment>")) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <clipping_planes_fragment>",
+        `#include <clipping_planes_fragment>\n${CARVE_FRAG_MAIN}`
+      );
+    } else {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "void main() {",
+        `void main() {\n${CARVE_FRAG_MAIN}`
+      );
+    }
+    material.userData.shader = shader;
+  };
+  material.customProgramCacheKey = () => "gel-carve-v1";
+  material.needsUpdate = true;
 }
