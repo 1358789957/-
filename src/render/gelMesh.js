@@ -4,13 +4,18 @@ const TWO_PI = Math.PI * 2;
 const _sample = new Float32Array(3);
 
 /**
- * Closed cylinder whose vertices store cylindrical coordinates so they
- * can be skinned each frame from the XPBD lattice.
+ * Closed gel surface. Vertices store (rNorm, theta, yNorm) samples so they
+ * can be skinned each frame from the XPBD lattice of any rest shape.
  */
+export function visualRadialSegs(shape) {
+  return shape === "prism" ? 8 : 48;
+}
+
 export function createGelGeometry({
   radialSegs = 48,
   heightSegs = 36,
   capRings = 8,
+  caps = "both",
 } = {}) {
   const positions = [];
   const samples = [];
@@ -77,33 +82,51 @@ export function createGelGeometry({
     }
   };
 
-  addCap(0, true);
-  addCap(1, false);
+  if (caps === "both" || caps === "bottom") addCap(0, true);
+  if (caps === "both" || caps === "top") addCap(1, false);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setAttribute("restCyl", new THREE.Float32BufferAttribute(samples, 3));
+  geometry.setAttribute("restPos", new THREE.Float32BufferAttribute(new Float32Array(positions.length), 3));
   geometry.setIndex(indices);
   geometry.userData.samples = new Float32Array(samples);
+  geometry.userData.restGen = -1;
   geometry.computeVertexNormals();
   return geometry;
 }
 
 export function deformGelGeometry(geometry, soft, { normals = true } = {}) {
   const pos = geometry.attributes.position;
+  let restPos = geometry.attributes.restPos;
+  if (!restPos) {
+    restPos = new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
+    geometry.setAttribute("restPos", restPos);
+  }
   const samples = geometry.userData.samples;
   const n = pos.count;
   const arr = pos.array;
+  const restArr = restPos.array;
+  const writeRest = geometry.userData.restGen !== soft.restGeneration;
   for (let i = 0; i < n; i++) {
     const s = i * 3;
     soft.sample(samples[s], samples[s + 1], samples[s + 2], _sample);
-    const o = i * 3;
-    arr[o] = _sample[0];
-    arr[o + 1] = _sample[1];
-    arr[o + 2] = _sample[2];
+    arr[s] = _sample[0];
+    arr[s + 1] = _sample[1];
+    arr[s + 2] = _sample[2];
+    if (writeRest) {
+      soft.sample(samples[s], samples[s + 1], samples[s + 2], _sample, soft.rest);
+      restArr[s] = _sample[0];
+      restArr[s + 1] = _sample[1];
+      restArr[s + 2] = _sample[2];
+    }
   }
   pos.needsUpdate = true;
+  if (writeRest) {
+    restPos.needsUpdate = true;
+    geometry.userData.restGen = soft.restGeneration;
+  }
   if (normals) geometry.computeVertexNormals();
 }
 
@@ -154,16 +177,16 @@ export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
 }
 
 const CARVE_VERT = /* glsl */ `
-attribute vec3 restCyl;
-varying vec3 vRestCyl;
+attribute vec3 restPos;
+varying vec3 vRestPos;
 `;
 
 const CARVE_VERT_MAIN = /* glsl */ `
-vRestCyl = restCyl;
+vRestPos = restPos;
 `;
 
 const CARVE_FRAG = /* glsl */ `
-varying vec3 vRestCyl;
+varying vec3 vRestPos;
 uniform int uCarveCount;
 uniform vec4 uCarvePos[16];
 uniform vec4 uCarveDir[16];
@@ -193,12 +216,7 @@ bool gelCarved(vec3 p) {
 
 const CARVE_FRAG_MAIN = /* glsl */ `
 {
-  vec3 restPos = vec3(
-    cos(vRestCyl.y) * vRestCyl.x * uGelRadius,
-    vRestCyl.z * uGelHeight + uGelFloor,
-    sin(vRestCyl.y) * vRestCyl.x * uGelRadius
-  );
-  if (gelCarved(restPos)) discard;
+  if (gelCarved(vRestPos)) discard;
 }
 `;
 
@@ -228,6 +246,6 @@ export function attachCarveShader(material, carveSet, gel) {
     }
     material.userData.shader = shader;
   };
-  material.customProgramCacheKey = () => "gel-carve-v1";
+  material.customProgramCacheKey = () => "gel-carve-v2";
   material.needsUpdate = true;
 }

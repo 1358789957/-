@@ -6,23 +6,34 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>透明软胶 · v5</title>
+    <title>透明软胶 · v6</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
       <canvas id="c"></canvas>
       <div class="quick" id="quickBar">
-        <button type="button" id="quickReset">重置</button>
+        <button type="button" id="quickReset" title="只回正姿态，不改形态和雕刻">重置</button>
         <button type="button" id="quickFix">固定</button>
       </div>
       <aside class="hud" id="hud">
         <div class="hud-bar">
-          <h1>圆柱透明软胶</h1>
+          <h1>透明软胶</h1>
           <button type="button" id="hudToggle" aria-expanded="true">收起</button>
         </div>
         <div class="hud-body" id="hudBody">
-        <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。</p>
+        <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。重置只回正姿态，不改形态和雕刻。</p>
+
+        <div class="row">
+          <label>形态</label>
+          <output id="shapeOut">圆柱</output>
+        </div>
+        <div class="presets shapes" id="shapePresets">
+          <button type="button" data-shape="cylinder" class="active">圆柱</button>
+          <button type="button" data-shape="sphere">圆珠</button>
+          <button type="button" data-shape="prism">棱柱</button>
+          <button type="button" data-shape="grip">握柄</button>
+        </div>
 
         <div class="modes">
           <button type="button" id="modeSim" class="active">模拟</button>
@@ -92,7 +103,7 @@
         <input id="gravity" type="range" min="0" max="140" value="72" />
 
         <div class="actions">
-          <button type="button" id="reset">复位</button>
+          <button type="button" id="reset" title="只回正姿态，不改形态和雕刻">复位姿态</button>
           <button type="button" id="drop">抛落</button>
           <button type="button" id="poke">轻弹</button>
         </div>

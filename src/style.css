@@ -216,6 +216,17 @@ input[type="range"] {
   margin-bottom: 12px;
 }
 
+.presets.shapes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.presets.shapes button {
+  padding: 7px 4px;
+  text-align: center;
+}
+
 button {
   appearance: none;
   border: 1px solid var(--line);

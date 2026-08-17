@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { SoftCylinder } from "./physics/SoftCylinder.js";
+import { GEL_SHAPES, SoftCylinder } from "./physics/SoftCylinder.js";
 import {
   DEFAULT_GEL_COLOR,
   applyGelColor,
@@ -9,6 +9,7 @@ import {
   createGelGeometry,
   createGelMaterial,
   deformGelGeometry,
+  visualRadialSegs,
 } from "./render/gelMesh.js";
 import {
   CarveSet,
@@ -28,6 +29,7 @@ const gravityOut = document.querySelector("#gravityOut");
 const pinEl = document.querySelector("#pinBottom");
 const colorEl = document.querySelector("#gelColor");
 const colorOut = document.querySelector("#gelColorOut");
+const shapeOut = document.querySelector("#shapeOut");
 const hintEl = document.querySelector("#hint");
 const modeSimEl = document.querySelector("#modeSim");
 const modeEditEl = document.querySelector("#modeEdit");
@@ -161,7 +163,7 @@ const soft = new SoftCylinder({
   gravity: -7.2,
 });
 
-const gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 36, capRings: 8 });
+let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 36, capRings: 8 });
 deformGelGeometry(gelGeom, soft);
 const gelMat = createGelMaterial();
 const gel = new THREE.Mesh(gelGeom, gelMat);
@@ -253,17 +255,8 @@ function setPointer(event) {
   pointer.y = -((src.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
-function cylToRest(rNorm, theta, yNorm, out) {
-  out.set(
-    Math.cos(theta) * rNorm * soft.radius,
-    yNorm * soft.height + soft.floorY,
-    Math.sin(theta) * rNorm * soft.radius
-  );
-  return out;
-}
-
 function restFromHit(hit) {
-  const attr = gelGeom.getAttribute("restCyl");
+  const attr = gelGeom.getAttribute("restPos");
   const face = hit.face;
   let bary = hit.barycoord;
   if (face && !bary) {
@@ -275,9 +268,9 @@ function restFromHit(hit) {
     THREE.Triangle.getBarycoord(hit.point, _restA, _restB, _restC, bary);
   }
   if (face && bary && attr) {
-    cylToRest(attr.getX(face.a), attr.getY(face.a), attr.getZ(face.a), _restA);
-    cylToRest(attr.getX(face.b), attr.getY(face.b), attr.getZ(face.b), _restB);
-    cylToRest(attr.getX(face.c), attr.getY(face.c), attr.getZ(face.c), _restC);
+    _restA.fromBufferAttribute(attr, face.a);
+    _restB.fromBufferAttribute(attr, face.b);
+    _restC.fromBufferAttribute(attr, face.c);
     restHit
       .set(0, 0, 0)
       .addScaledVector(_restA, bary.x)
@@ -501,6 +494,46 @@ gravityEl.addEventListener("input", () => {
   soft.setGravity(-g);
 });
 pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
+function gelCapsFor(shape) {
+  if (shape === "sphere") return "none";
+  if (shape === "grip") return "bottom";
+  return "both";
+}
+
+function focusCameraForShape() {
+  const y =
+    soft.shape === "sphere"
+      ? soft.floorY + soft.sphereRadius()
+      : soft.floorY + soft.height * 0.52;
+  controls.target.set(0, y, 0);
+}
+
+function rebuildGelVisual() {
+  const next = createGelGeometry({
+    radialSegs: visualRadialSegs(soft.shape),
+    heightSegs: 36,
+    capRings: 8,
+    caps: gelCapsFor(soft.shape),
+  });
+  deformGelGeometry(next, soft);
+  gel.geometry.dispose();
+  gel.geometry = next;
+  gelGeom = next;
+}
+
+function applyShape(name) {
+  if (!soft.setShape(name)) return;
+  carveSet.clear();
+  soft.clearCarved();
+  rebuildGelVisual();
+  focusCameraForShape();
+  shapeOut.textContent = GEL_SHAPES[soft.shape] || "圆柱";
+  document.querySelectorAll("[data-shape]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.shape === soft.shape);
+  });
+  meshDirty = true;
+}
+
 function doReset() {
   soft.reset();
   meshDirty = true;
@@ -514,14 +547,14 @@ document.querySelector("#drop").addEventListener("click", () => {
   soft.drop(1.05);
   meshDirty = true;
 });
+document.querySelectorAll("[data-shape]").forEach((btn) => {
+  btn.addEventListener("click", () => applyShape(btn.dataset.shape));
+});
+
 document.querySelector("#poke").addEventListener("click", () => {
   if (editMode) return;
-  const mid = soft.closestParticle(
-    soft.radius,
-    soft.height * 0.62 + soft.floorY,
-    0,
-    true
-  );
+  const pokeAt = soft.placeRest(1, 0, 0.58, new Float32Array(3));
+  const mid = soft.closestParticle(pokeAt[0], pokeAt[1], pokeAt[2], true);
   const o = mid * 3;
   soft.vel[o] += 3.4;
   soft.vel[o + 2] += 0.35;
@@ -542,12 +575,12 @@ function setEditMode(on) {
   if (on) {
     soft.reset();
     meshDirty = true;
-    hintEl.textContent = "胶已固定。点在胶上使用道具：打洞贯穿、切削挖块、裁切切掉一侧。空白处仍可旋转。";
+    hintEl.textContent = "胶已固定在当前形态。点在胶上打洞、切削或裁切。重置只回正姿态。";
     canvas.style.cursor = "crosshair";
     if (isPhoneHud()) setHudCollapsed(false);
   } else {
     hidePreviews();
-    hintEl.textContent = "拖拽揉捏表面，空白处旋转视角。软度越高越像果冻，越低越像硬硅胶。";
+    hintEl.textContent = "拖拽揉捏表面，空白处旋转视角。重置只回正姿态，不改形态和雕刻。";
     canvas.style.cursor = "default";
     soft.sleeping = false;
     meshDirty = true;

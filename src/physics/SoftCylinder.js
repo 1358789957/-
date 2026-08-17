@@ -1,12 +1,16 @@
 /**
- * Cylindrical XPBD soft body.
- *
- * Particles sit on a structured lattice: a center column plus concentric
- * rings. Constraints are distance (structure / shear / bend), tetrahedral
- * volume (nearly incompressible gel), floor contact, and an optional
- * finger collider. Softness maps to XPBD compliance. Shape matching
- * keeps a cylinder after tipping, instead of collapsing into a blob.
+ * XPBD soft gel on a structured lattice (center column + concentric rings).
+ * Rest positions can be a cylinder, sphere, prism, or grip. Constraints are
+ * distance, tetrahedral volume, floor contact, and an optional finger.
+ * reset() only snaps pose back to the current rest form.
  */
+
+export const GEL_SHAPES = {
+  cylinder: "圆柱",
+  sphere: "圆珠",
+  prism: "棱柱",
+  grip: "握柄",
+};
 
 const TWO_PI = Math.PI * 2;
 
@@ -16,6 +20,11 @@ function clamp(v, a, b) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+function smoothstep(e0, e1, x) {
+  const t = clamp((x - e0) / Math.max(1e-8, e1 - e0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 const _invT = new Float32Array(9);
@@ -61,11 +70,15 @@ function invert3(m, out) {
 }
 
 function polarRotation(A, R) {
-  for (let i = 0; i < 9; i++) R[i] = A[i];
+  let nrm = 0;
+  for (let i = 0; i < 9; i++) nrm += A[i] * A[i];
+  nrm = Math.sqrt(nrm);
+  const invN = nrm > 1e-10 ? 1 / nrm : 1;
+  for (let i = 0; i < 9; i++) R[i] = A[i] * invN;
   R[0] += 1e-5;
   R[4] += 1e-5;
   R[8] += 1e-5;
-  for (let iter = 0; iter < 8; iter++) {
+  for (let iter = 0; iter < 16; iter++) {
     if (!invert3(R, _tmp3)) break;
     _invT[0] = _tmp3[0];
     _invT[1] = _tmp3[3];
@@ -78,6 +91,38 @@ function polarRotation(A, R) {
     _invT[8] = _tmp3[8];
     for (let k = 0; k < 9; k++) R[k] = 0.5 * (R[k] + _invT[k]);
   }
+
+  let x0 = R[0];
+  let x1 = R[3];
+  let x2 = R[6];
+  let xl = Math.hypot(x0, x1, x2) || 1;
+  x0 /= xl;
+  x1 /= xl;
+  x2 /= xl;
+  let y0 = R[1];
+  let y1 = R[4];
+  let y2 = R[7];
+  const xd = x0 * y0 + x1 * y1 + x2 * y2;
+  y0 -= x0 * xd;
+  y1 -= x1 * xd;
+  y2 -= x2 * xd;
+  let yl = Math.hypot(y0, y1, y2) || 1;
+  y0 /= yl;
+  y1 /= yl;
+  y2 /= yl;
+  const z0 = x1 * y2 - x2 * y1;
+  const z1 = x2 * y0 - x0 * y2;
+  const z2 = x0 * y1 - x1 * y0;
+  R[0] = x0;
+  R[1] = y0;
+  R[2] = z0;
+  R[3] = x1;
+  R[4] = y1;
+  R[5] = z1;
+  R[6] = x2;
+  R[7] = y2;
+  R[8] = z2;
+
   const det =
     R[0] * (R[4] * R[8] - R[5] * R[7]) -
     R[1] * (R[3] * R[8] - R[5] * R[6]) +
@@ -145,6 +190,8 @@ export class SoftCylinder {
     this.iterations = 6;
     this.volumeBoost = 1.0;
     this.pinBottom = false;
+    this.shape = "cylinder";
+    this.restGeneration = 0;
 
     this.fingerActive = false;
     this.finger = { x: 0, y: 0, z: 0, radius: 0.14 };
@@ -194,23 +241,11 @@ export class SoftCylinder {
     const m = (density * volume) / count;
 
     for (let h = 0; h < H; h++) {
-      const y = (h / (H - 1)) * height + this.floorY;
-      const ci = this.centerIndex(h) * 3;
-      this.rest[ci] = 0;
-      this.rest[ci + 1] = y;
-      this.rest[ci + 2] = 0;
       this.mass[this.centerIndex(h)] = m * 1.15;
       this.invMass[this.centerIndex(h)] = 1 / this.mass[this.centerIndex(h)];
-
       for (let r = 1; r <= rings; r++) {
-        const rr = (r / rings) * radius;
         for (let a = 0; a < A; a++) {
-          const theta = (a / A) * TWO_PI;
           const i = this.ringIndex(r, h, a);
-          const o = i * 3;
-          this.rest[o] = Math.cos(theta) * rr;
-          this.rest[o + 1] = y;
-          this.rest[o + 2] = Math.sin(theta) * rr;
           const ringMass = r === rings ? m * 0.9 : m;
           this.mass[i] = ringMass;
           this.invMass[i] = 1 / ringMass;
@@ -218,8 +253,137 @@ export class SoftCylinder {
       }
     }
 
+    this._applyRestShape();
     this.pos.set(this.rest);
     this.prev.set(this.rest);
+  }
+
+  sphereRadius() {
+    return Math.min(this.radius * 1.45, this.height * 0.48);
+  }
+
+  placeRest(rNorm, theta, yNorm, out) {
+    const R = this.radius;
+    const H = this.height;
+    const y0 = this.floorY;
+    const rn = clamp(rNorm, 0, 1);
+    const yn = clamp(yNorm, 0, 1);
+
+    if (this.shape === "sphere") {
+      const Rs = this.sphereRadius();
+      const phi = yn * Math.PI;
+      const ring = Rs * Math.sin(phi) * rn;
+      out[0] = Math.cos(theta) * ring;
+      out[1] = y0 + Rs * (1 - Math.cos(phi));
+      out[2] = Math.sin(theta) * ring;
+      return out;
+    }
+
+    if (this.shape === "prism") {
+      const n = this.A;
+      const half = Math.PI / n;
+      const local = ((theta % TWO_PI) + TWO_PI) % TWO_PI;
+      const sector = local % (2 * half);
+      const faceR = (R * Math.cos(half)) / Math.max(0.18, Math.cos(sector - half));
+      const rr = rn * faceR;
+      out[0] = Math.cos(theta) * rr;
+      out[1] = y0 + yn * H;
+      out[2] = Math.sin(theta) * rr;
+      return out;
+    }
+
+    if (this.shape === "grip") {
+      const y = y0 + yn * H;
+      const Rb = R * 0.6;
+      const cy = y0 + H - Rb;
+      let shaft;
+      if (yn < 0.1) {
+        shaft = R * lerp(0.46, 0.42, yn / 0.1);
+      } else if (yn < 0.56) {
+        const t = (yn - 0.1) / 0.46;
+        shaft = R * (0.42 + 0.08 * Math.sin(t * Math.PI));
+      } else {
+        shaft = R * lerp(0.42, 0.38, clamp((yn - 0.56) / 0.16, 0, 1));
+      }
+      const dy = y - cy;
+      const bulb = dy * dy <= Rb * Rb ? Math.sqrt(Rb * Rb - dy * dy) : 0;
+      const rad = lerp(shaft, bulb, smoothstep(cy - Rb, cy - Rb * 0.18, y));
+      out[0] = Math.cos(theta) * rad * rn;
+      out[1] = y;
+      out[2] = Math.sin(theta) * rad * rn;
+      return out;
+    }
+
+    const rr = rn * R;
+    out[0] = Math.cos(theta) * rr;
+    out[1] = y0 + yn * H;
+    out[2] = Math.sin(theta) * rr;
+    return out;
+  }
+
+  _applyRestShape() {
+    const { A, H, rings } = this;
+    const tmp = this._placeTmp || (this._placeTmp = new Float32Array(3));
+    for (let h = 0; h < H; h++) {
+      const yNorm = h / (H - 1);
+      this.placeRest(0, 0, yNorm, tmp);
+      const ci = this.centerIndex(h) * 3;
+      this.rest[ci] = tmp[0];
+      this.rest[ci + 1] = tmp[1];
+      this.rest[ci + 2] = tmp[2];
+      for (let r = 1; r <= rings; r++) {
+        const rNorm = r / rings;
+        for (let a = 0; a < A; a++) {
+          const theta = (a / A) * TWO_PI;
+          this.placeRest(rNorm, theta, yNorm, tmp);
+          const o = this.ringIndex(r, h, a) * 3;
+          this.rest[o] = tmp[0];
+          this.rest[o + 1] = tmp[1];
+          this.rest[o + 2] = tmp[2];
+        }
+      }
+    }
+    this.restGeneration += 1;
+  }
+
+  _refreshConstraintRests() {
+    const { rest, distI, distJ, distRest } = this;
+    for (let n = 0; n < distI.length; n++) {
+      const i = distI[n] * 3;
+      const j = distJ[n] * 3;
+      distRest[n] = Math.hypot(
+        rest[i] - rest[j],
+        rest[i + 1] - rest[j + 1],
+        rest[i + 2] - rest[j + 2]
+      );
+    }
+    for (let n = 0; n < this.tetI.length; n++) {
+      let v0 = tetVolume(
+        this.rest,
+        this.tetI[n],
+        this.tetJ[n],
+        this.tetK[n],
+        this.tetL[n]
+      );
+      if (v0 < 0) {
+        const tmp = this.tetK[n];
+        this.tetK[n] = this.tetL[n];
+        this.tetL[n] = tmp;
+        v0 = -v0;
+      }
+      this.tetRest[n] = v0 * this.volumeBoost;
+    }
+  }
+
+  setShape(name) {
+    const next = GEL_SHAPES[name] ? name : "cylinder";
+    if (next === this.shape) return false;
+    this.shape = next;
+    this._applyRestShape();
+    this._refreshConstraintRests();
+    this._rebuildShapeRest();
+    this.reset();
+    return true;
   }
 
   _addDistance(i, j, kind) {
@@ -455,6 +619,7 @@ export class SoftCylinder {
     this.sleeping = false;
   }
 
+  /** Stand the gel back at its current rest form. Does not change shape or carves. */
   reset() {
     this.pos.set(this.rest);
     this.prev.set(this.rest);
@@ -709,6 +874,7 @@ export class SoftCylinder {
       const w3 = invMass[i3];
       const w4 = invMass[i4];
       if (w1 + w2 + w3 + w4 <= 0) continue;
+      if (Math.abs(tetRest[c]) < 1e-8) continue;
 
       const p1 = i1 * 3;
       const p2 = i2 * 3;
@@ -1002,8 +1168,9 @@ export class SoftCylinder {
     }
   }
 
-  sample(rNorm, theta, yNorm, out) {
-    const { A, H, rings, pos } = this;
+  sample(rNorm, theta, yNorm, out, field) {
+    const { A, H, rings } = this;
+    const pos = field || this.pos;
     const rf = clamp(rNorm, 0, 1) * rings;
     const hf = clamp(yNorm, 0, 1) * (H - 1);
     const aWrap = (((theta / TWO_PI) % 1) + 1) % 1 * A;
