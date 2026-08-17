@@ -4,8 +4,8 @@ const TWO_PI = Math.PI * 2;
 const _sample = new Float32Array(3);
 
 /**
- * Hollow gel shell. Vertices store (wallNorm, theta, yNorm): 0 is the inner
- * surface, 1 is the outer surface. Open ends get a wall-thickness rim.
+ * Closed solid gel surface. Vertices store (rNorm, theta, yNorm) so they can
+ * be skinned from the filled XPBD lattice. Caps are filled disks, not rims.
  */
 export function visualRadialSegs(shape) {
   return shape === "prism" ? 8 : 48;
@@ -13,68 +13,77 @@ export function visualRadialSegs(shape) {
 
 export function createGelGeometry({
   radialSegs = 48,
-  heightSegs = 40,
-  rimSegs = 4,
-  caps = "rims",
+  heightSegs = 36,
+  capRings = 8,
+  caps = "both",
 } = {}) {
   const positions = [];
   const samples = [];
   const uvs = [];
   const indices = [];
-  const cols = radialSegs + 1;
 
-  const addGrid = (wallNorm, invert, vOffset = 0) => {
+  const sideStart = 0;
+  for (let h = 0; h <= heightSegs; h++) {
+    const yNorm = h / heightSegs;
+    for (let a = 0; a <= radialSegs; a++) {
+      const u = a / radialSegs;
+      const theta = u * TWO_PI;
+      samples.push(1, theta, yNorm);
+      positions.push(0, 0, 0);
+      uvs.push(u, yNorm);
+    }
+  }
+
+  const sideCols = radialSegs + 1;
+  for (let h = 0; h < heightSegs; h++) {
+    for (let a = 0; a < radialSegs; a++) {
+      const i0 = sideStart + h * sideCols + a;
+      const i1 = i0 + 1;
+      const i2 = i0 + sideCols;
+      const i3 = i2 + 1;
+      indices.push(i0, i2, i1, i1, i2, i3);
+    }
+  }
+
+  const addCap = (yNorm, inward) => {
     const start = samples.length / 3;
-    for (let h = 0; h <= heightSegs; h++) {
-      const yNorm = h / heightSegs;
+    samples.push(0, 0, yNorm);
+    positions.push(0, 0, 0);
+    uvs.push(0.5, 0.5);
+
+    for (let r = 1; r <= capRings; r++) {
+      const rNorm = r / capRings;
       for (let a = 0; a <= radialSegs; a++) {
         const u = a / radialSegs;
         const theta = u * TWO_PI;
-        samples.push(wallNorm, theta, yNorm);
+        samples.push(rNorm, theta, yNorm);
         positions.push(0, 0, 0);
-        uvs.push(u, yNorm * 0.5 + vOffset);
+        uvs.push(0.5 + Math.cos(theta) * 0.5 * rNorm, 0.5 + Math.sin(theta) * 0.5 * rNorm);
       }
     }
-    for (let h = 0; h < heightSegs; h++) {
+
+    const cols = radialSegs + 1;
+    for (let a = 0; a < radialSegs; a++) {
+      const outer = start + 1 + a;
+      if (inward) indices.push(start, outer + 1, outer);
+      else indices.push(start, outer, outer + 1);
+    }
+    for (let r = 0; r < capRings - 1; r++) {
+      const ring = start + 1 + r * cols;
+      const next = ring + cols;
       for (let a = 0; a < radialSegs; a++) {
-        const i0 = start + h * cols + a;
+        const i0 = ring + a;
         const i1 = i0 + 1;
-        const i2 = i0 + cols;
+        const i2 = next + a;
         const i3 = i2 + 1;
-        if (invert) indices.push(i0, i1, i2, i1, i3, i2);
+        if (inward) indices.push(i0, i1, i2, i1, i3, i2);
         else indices.push(i0, i2, i1, i1, i2, i3);
       }
     }
   };
 
-  const addRim = (yNorm, invert) => {
-    const start = samples.length / 3;
-    for (let r = 0; r <= rimSegs; r++) {
-      const wallNorm = r / rimSegs;
-      for (let a = 0; a <= radialSegs; a++) {
-        const u = a / radialSegs;
-        const theta = u * TWO_PI;
-        samples.push(wallNorm, theta, yNorm);
-        positions.push(0, 0, 0);
-        uvs.push(u, yNorm > 0.5 ? 0.96 : 0.04);
-      }
-    }
-    for (let r = 0; r < rimSegs; r++) {
-      for (let a = 0; a < radialSegs; a++) {
-        const i0 = start + r * cols + a;
-        const i1 = i0 + 1;
-        const i2 = i0 + cols;
-        const i3 = i2 + 1;
-        if (invert) indices.push(i0, i1, i2, i1, i3, i2);
-        else indices.push(i0, i2, i1, i1, i2, i3);
-      }
-    }
-  };
-
-  addGrid(1, false, 0.5);
-  addGrid(0, true, 0);
-  if (caps === "rims" || caps === "both" || caps === "bottom") addRim(0, true);
-  if (caps === "rims" || caps === "both" || caps === "top") addRim(1, false);
+  if (caps === "both" || caps === "bottom") addCap(0, true);
+  if (caps === "both" || caps === "top") addCap(1, false);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -138,8 +147,8 @@ export function applyGelColor(material, hex) {
     Math.max(0.16, Math.min(0.62, _hsl.l * 0.52))
   );
   material.attenuationColor.copy(_deep);
-  material.attenuationDistance = 0.2 + (1 - _hsl.s) * 0.22;
-  material.thickness = 0.22;
+  material.attenuationDistance = 0.28 + (1 - _hsl.s) * 0.28;
+  material.thickness = 0.48;
   _sheen.copy(_tint).lerp(new THREE.Color(0xffffff), 0.42);
   material.sheenColor.copy(_sheen);
 }
@@ -148,23 +157,23 @@ export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
   const material = new THREE.MeshPhysicalMaterial({
     color: 0xc8f4ff,
     metalness: 0,
-    roughness: 0.062,
-    transmission: 0.86,
-    thickness: 0.24,
+    roughness: 0.07,
+    transmission: 0.84,
+    thickness: 0.52,
     ior: 1.41,
     transparent: true,
     opacity: 1,
-    attenuationColor: new THREE.Color(0x4aa8e8),
-    attenuationDistance: 0.28,
+    attenuationColor: new THREE.Color(0x3e9ad4),
+    attenuationDistance: 0.36,
     clearcoat: 1,
-    clearcoatRoughness: 0.06,
-    sheen: 0.52,
+    clearcoatRoughness: 0.07,
+    sheen: 0.48,
     sheenColor: new THREE.Color(0xe4f7ff),
-    iridescence: 0.09,
+    iridescence: 0.08,
     iridescenceIOR: 1.3,
-    specularIntensity: 0.92,
-    envMapIntensity: 1.62,
-    side: THREE.DoubleSide,
+    specularIntensity: 0.9,
+    envMapIntensity: 1.55,
+    side: THREE.FrontSide,
   });
   applyGelColor(material, hex);
   return material;

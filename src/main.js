@@ -181,7 +181,7 @@ const soft = new SoftCylinder({
   gravity: -7.2,
 });
 
-let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 40, rimSegs: 4, caps: "rims" });
+let gelGeom = createGelGeometry({ radialSegs: 48, heightSegs: 40, capRings: 8, caps: "both" });
 deformGelGeometry(gelGeom, soft);
 const gelMat = createGelMaterial();
 const gel = new THREE.Mesh(gelGeom, gelMat);
@@ -321,24 +321,6 @@ function isFrontHit(hit) {
   return _hitN.dot(raycaster.ray.direction) < -0.04;
 }
 
-function rayThroughCavity() {
-  if (soft.shape === "sphere") return false;
-  _axis.set(soft.orientR[1], soft.orientR[4], soft.orientR[7]);
-  if (_axis.lengthSq() < 1e-8) _axis.set(0, 1, 0);
-  _axis.normalize();
-  _com.set(soft.restCom[0], soft.restCom[1], soft.restCom[2]);
-  const ray = raycaster.ray;
-  _cross.crossVectors(ray.direction, _axis);
-  const den = _cross.length();
-  const hole = soft.radius * soft.innerRatio * 0.9;
-  if (den < 1e-5) {
-    _hitN.subVectors(ray.origin, _com).cross(_axis);
-    return _hitN.length() < hole;
-  }
-  _hitN.subVectors(ray.origin, _com);
-  return Math.abs(_hitN.dot(_cross)) / den < hole;
-}
-
 function restFromHit(hit) {
   const attr = gelGeom.getAttribute("restPos");
   const face = hit.face;
@@ -380,50 +362,39 @@ function restFromHit(hit) {
 }
 
 function pickGelInfo() {
-  const throughHole = !editMode && rayThroughCavity();
   const meshHits = raycaster.intersectObject(gel, false);
-  let innerFallback = null;
   for (let i = 0; i < meshHits.length; i++) {
     const hit = meshHits[i];
     if (!isFrontHit(hit)) continue;
     const rest = restFromHit(hit);
     if (carveSet.contains(rest.x, rest.y, rest.z)) continue;
-    const wall = hitWallNorm(hit);
-    if (throughHole && wall < 0.45) continue;
-    if (wall < 0.45) {
-      if (!innerFallback) innerFallback = { point: hit.point, rest, hit };
-      continue;
-    }
     return { point: hit.point, rest, hit };
   }
-  if (innerFallback && !throughHole) return innerFallback;
-  if (throughHole) return null;
   const ray = raycaster.ray;
   let best = 0.12;
   let found = null;
   const { pos, A, H } = soft;
-  for (const r of [soft.outerRing(), 0]) {
-    for (let h = 0; h < H; h++) {
-      for (let a = 0; a < A; a++) {
-        const i = soft.ringIndex(r, h, a);
-        if (soft.carved[i]) continue;
-        _pick.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-        const d = ray.distanceToPoint(_pick);
-        if (d < best) {
-          best = d;
-          ray.closestPointToPoint(_pick, _closest);
-          hitPoint.copy(_closest);
-          const o = i * 3;
-          found = {
-            point: hitPoint,
-            rest: {
-              x: soft.rest[o],
-              y: soft.rest[o + 1],
-              z: soft.rest[o + 2],
-              yNorm: (soft.rest[o + 1] - soft.floorY) / soft.height,
-            },
-          };
-        }
+  const outer = soft.outerRing();
+  for (let h = 0; h < H; h++) {
+    for (let a = 0; a < A; a++) {
+      const i = soft.ringIndex(outer, h, a);
+      if (soft.carved[i]) continue;
+      _pick.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+      const d = ray.distanceToPoint(_pick);
+      if (d < best) {
+        best = d;
+        ray.closestPointToPoint(_pick, _closest);
+        hitPoint.copy(_closest);
+        const o = i * 3;
+        found = {
+          point: hitPoint,
+          rest: {
+            x: soft.rest[o],
+            y: soft.rest[o + 1],
+            z: soft.rest[o + 2],
+            yNorm: (soft.rest[o + 1] - soft.floorY) / soft.height,
+          },
+        };
       }
     }
   }
@@ -667,7 +638,7 @@ pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
 function gelCapsFor(shape) {
   if (shape === "sphere") return "none";
   if (shape === "grip") return "bottom";
-  return "rims";
+  return "both";
 }
 
 function focusCameraForShape() {
@@ -682,7 +653,7 @@ function rebuildGelVisual() {
   const next = createGelGeometry({
     radialSegs: visualRadialSegs(soft.shape),
     heightSegs: 40,
-    rimSegs: 4,
+    capRings: 8,
     caps: gelCapsFor(soft.shape),
   });
   deformGelGeometry(next, soft);
@@ -701,6 +672,7 @@ function applyShape(name) {
   document.querySelectorAll("[data-shape]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.shape === soft.shape);
   });
+  if (editMode) soft.freeze();
   meshDirty = true;
 }
 
@@ -721,6 +693,7 @@ function applyOrientChange(mapped) {
     carveSet.applyToSoft(soft);
   }
   syncAxisInputs();
+  if (editMode) soft.freeze();
   meshDirty = true;
 }
 
@@ -730,6 +703,7 @@ function setAxisValues(x, y, z) {
 
 function doReset() {
   soft.reset();
+  if (editMode) soft.freeze();
   meshDirty = true;
 }
 
@@ -744,6 +718,7 @@ function doFullReset() {
     btn.classList.toggle("active", btn.dataset.shape === soft.shape);
   });
   syncAxisInputs();
+  if (editMode) soft.freeze();
   meshDirty = true;
 }
 
@@ -784,15 +759,15 @@ function setEditMode(on) {
   editPanelEl.hidden = !on;
   editQuickEl.hidden = !on;
   if (on) {
-    soft.reset();
+    soft.freeze();
     meshDirty = true;
-    hintEl.textContent = "胶已固定。塑形像拉坯：左右拖改这一圈粗细。打洞 / 切削 / 裁切仍可用。";
+    hintEl.textContent = "已冻在当前姿势。塑形像拉坯：左右拖改这一圈粗细。打洞 / 切削 / 裁切仍可用。";
     canvas.style.cursor = currentTool === "sculpt" ? "ew-resize" : "crosshair";
   } else {
     hidePreviews();
-    hintEl.textContent = "复位只回正。重置清空形态、方向和雕刻。捏中部搬整根胶，捏两端可揉。点方向展开 XYZ。";
+    hintEl.textContent = "实心软胶。复位只回正；重置全部清空。固定冻在当前位置，不会弹回。";
     canvas.style.cursor = "default";
-    soft.sleeping = false;
+    soft.unfreeze();
     meshDirty = true;
   }
 }
