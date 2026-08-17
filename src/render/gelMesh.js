@@ -106,8 +106,30 @@ export function deformGelGeometry(geometry, soft, { normals = true } = {}) {
   if (normals) geometry.computeVertexNormals();
 }
 
-export function createGelMaterial() {
-  return new THREE.MeshPhysicalMaterial({
+const _tint = new THREE.Color();
+const _deep = new THREE.Color();
+const _sheen = new THREE.Color();
+const _hsl = { h: 0, s: 0, l: 0 };
+
+export const DEFAULT_GEL_COLOR = "#c8f4ff";
+
+export function applyGelColor(material, hex) {
+  _tint.set(hex);
+  material.color.copy(_tint);
+  _tint.getHSL(_hsl);
+  _deep.setHSL(
+    _hsl.h,
+    Math.min(1, _hsl.s * 1.28 + 0.06),
+    Math.max(0.16, Math.min(0.62, _hsl.l * 0.52))
+  );
+  material.attenuationColor.copy(_deep);
+  material.attenuationDistance = 0.48 + (1 - _hsl.s) * 0.5;
+  _sheen.copy(_tint).lerp(new THREE.Color(0xffffff), 0.42);
+  material.sheenColor.copy(_sheen);
+}
+
+export function createGelMaterial(hex = DEFAULT_GEL_COLOR) {
+  const material = new THREE.MeshPhysicalMaterial({
     color: 0xc8f4ff,
     metalness: 0,
     roughness: 0.06,
@@ -126,4 +148,6 @@ export function createGelMaterial() {
     envMapIntensity: 1.15,
     side: THREE.DoubleSide,
   });
+  applyGelColor(material, hex);
+  return material;
 }

@@ -30,6 +30,26 @@
         </div>
 
         <div class="row">
+          <label for="gelColor">颜色</label>
+          <output id="gelColorOut">#C8F4FF</output>
+        </div>
+        <div class="color-row">
+          <label class="color-chip" title="打开色盘">
+            <input id="gelColor" type="color" value="#c8f4ff" />
+          </label>
+          <div class="swatches" id="swatches">
+            <button type="button" data-color="#c8f4ff" style="--sw:#c8f4ff" title="冰蓝"></button>
+            <button type="button" data-color="#f4fbff" style="--sw:#f4fbff" title="透明"></button>
+            <button type="button" data-color="#ffb7d5" style="--sw:#ffb7d5" title="粉"></button>
+            <button type="button" data-color="#ffc56e" style="--sw:#ffc56e" title="琥珀"></button>
+            <button type="button" data-color="#9ef0c6" style="--sw:#9ef0c6" title="薄荷"></button>
+            <button type="button" data-color="#c5b7ff" style="--sw:#c5b7ff" title="紫"></button>
+            <button type="button" data-color="#ff8a7a" style="--sw:#ff8a7a" title="珊瑚"></button>
+            <button type="button" data-color="#d4d8e0" style="--sw:#d4d8e0" title="烟灰"></button>
+          </div>
+        </div>
+
+        <div class="row">
           <label for="damping">阻尼</label>
           <output id="dampingOut">22%</output>
         </div>

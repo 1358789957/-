@@ -3,6 +3,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { SoftCylinder } from "./physics/SoftCylinder.js";
 import {
+  DEFAULT_GEL_COLOR,
+  applyGelColor,
   createGelGeometry,
   createGelMaterial,
   deformGelGeometry,
@@ -17,6 +19,8 @@ const dampingOut = document.querySelector("#dampingOut");
 const gravityEl = document.querySelector("#gravity");
 const gravityOut = document.querySelector("#gravityOut");
 const pinEl = document.querySelector("#pinBottom");
+const colorEl = document.querySelector("#gelColor");
+const colorOut = document.querySelector("#gelColorOut");
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -303,6 +307,28 @@ document.querySelectorAll("[data-soft]").forEach((btn) => {
   btn.addEventListener("click", () => applySoftness(btn.dataset.soft));
 });
 applySoftness(55);
+
+function normalizeHex(value) {
+  const hex = String(value || "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(hex)) return hex.toLowerCase();
+  return DEFAULT_GEL_COLOR;
+}
+
+function applyColor(hex) {
+  const value = normalizeHex(hex);
+  colorEl.value = value;
+  colorOut.textContent = value.toUpperCase();
+  applyGelColor(gelMat, value);
+  document.querySelectorAll("#swatches [data-color]").forEach((btn) => {
+    btn.classList.toggle("active", normalizeHex(btn.dataset.color) === value);
+  });
+}
+
+colorEl.addEventListener("input", () => applyColor(colorEl.value));
+document.querySelectorAll("#swatches [data-color]").forEach((btn) => {
+  btn.addEventListener("click", () => applyColor(btn.dataset.color));
+});
+applyColor(DEFAULT_GEL_COLOR);
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
