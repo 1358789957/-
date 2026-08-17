@@ -248,10 +248,16 @@ window.addEventListener("touchmove", moveInteract, { passive: false });
 window.addEventListener("touchend", endInteract);
 window.addEventListener("touchcancel", endInteract);
 
+function softnessLabel(percent) {
+  if (percent <= 28) return "硬胶";
+  if (percent <= 70) return "中等";
+  return "超软";
+}
+
 function applySoftness(percent) {
   const s = Number(percent) / 100;
   softnessEl.value = String(percent);
-  softnessOut.textContent = `${Math.round(percent)}%`;
+  softnessOut.textContent = `${softnessLabel(percent)} ${Math.round(percent)}%`;
   soft.setSoftness(s);
   document.querySelectorAll("[data-soft]").forEach((btn) => {
     btn.classList.toggle("active", Number(btn.dataset.soft) === Number(percent));

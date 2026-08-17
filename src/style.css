@@ -83,8 +83,16 @@ body {
 
 input[type="range"] {
   width: 100%;
-  margin: 0 0 12px;
+  margin: 0 0 4px;
   accent-color: var(--accent);
+}
+
+.ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 10px;
 }
 
 .presets,
