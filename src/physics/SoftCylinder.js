@@ -27,6 +27,82 @@ function smoothstep(e0, e1, x) {
   return t * t * (3 - 2 * t);
 }
 
+export function wrapDeg(v) {
+  const d = ((((Number(v) || 0) + 180) % 360) + 360) % 360 - 180;
+  return d === -180 ? 180 : d;
+}
+
+function mulMat3(a, b, out) {
+  const r0 = a[0] * b[0] + a[1] * b[3] + a[2] * b[6];
+  const r1 = a[0] * b[1] + a[1] * b[4] + a[2] * b[7];
+  const r2 = a[0] * b[2] + a[1] * b[5] + a[2] * b[8];
+  const r3 = a[3] * b[0] + a[4] * b[3] + a[5] * b[6];
+  const r4 = a[3] * b[1] + a[4] * b[4] + a[5] * b[7];
+  const r5 = a[3] * b[2] + a[4] * b[5] + a[5] * b[8];
+  const r6 = a[6] * b[0] + a[7] * b[3] + a[8] * b[6];
+  const r7 = a[6] * b[1] + a[7] * b[4] + a[8] * b[7];
+  const r8 = a[6] * b[2] + a[7] * b[5] + a[8] * b[8];
+  out[0] = r0;
+  out[1] = r1;
+  out[2] = r2;
+  out[3] = r3;
+  out[4] = r4;
+  out[5] = r5;
+  out[6] = r6;
+  out[7] = r7;
+  out[8] = r8;
+}
+
+function eulerXyz(xDeg, yDeg, zDeg, out) {
+  const x = (xDeg * Math.PI) / 180;
+  const y = (yDeg * Math.PI) / 180;
+  const z = (zDeg * Math.PI) / 180;
+  const cx = Math.cos(x);
+  const sx = Math.sin(x);
+  const cy = Math.cos(y);
+  const sy = Math.sin(y);
+  const cz = Math.cos(z);
+  const sz = Math.sin(z);
+  const rx = _tmpRx;
+  const ry = _tmpRy;
+  const rz = _tmpRz;
+  rx[0] = 1;
+  rx[1] = 0;
+  rx[2] = 0;
+  rx[3] = 0;
+  rx[4] = cx;
+  rx[5] = -sx;
+  rx[6] = 0;
+  rx[7] = sx;
+  rx[8] = cx;
+  ry[0] = cy;
+  ry[1] = 0;
+  ry[2] = sy;
+  ry[3] = 0;
+  ry[4] = 1;
+  ry[5] = 0;
+  ry[6] = -sy;
+  ry[7] = 0;
+  ry[8] = cy;
+  rz[0] = cz;
+  rz[1] = -sz;
+  rz[2] = 0;
+  rz[3] = sz;
+  rz[4] = cz;
+  rz[5] = 0;
+  rz[6] = 0;
+  rz[7] = 0;
+  rz[8] = 1;
+  mulMat3(ry, rx, _tmpE);
+  mulMat3(rz, _tmpE, out);
+}
+
+const _tmpRx = new Float32Array(9);
+const _tmpRy = new Float32Array(9);
+const _tmpRz = new Float32Array(9);
+const _tmpE = new Float32Array(9);
+const _tmpM = new Float32Array(9);
+
 const _invT = new Float32Array(9);
 const _tmp3 = new Float32Array(9);
 
@@ -192,6 +268,11 @@ export class SoftCylinder {
     this.pinBottom = false;
     this.shape = "cylinder";
     this.restGeneration = 0;
+    this.orientDeg = { x: 0, y: 0, z: 0 };
+    this.zeroR = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    this.orientR = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    this.orientLift = 0;
+    this.rest0Com = new Float32Array(3);
 
     this.fingerActive = false;
     this.finger = { x: 0, y: 0, z: 0, radius: 0.14 };
@@ -232,6 +313,7 @@ export class SoftCylinder {
     this.prev = new Float32Array(count * 3);
     this.vel = new Float32Array(count * 3);
     this.rest = new Float32Array(count * 3);
+    this.rest0 = new Float32Array(count * 3);
     this.invMass = new Float32Array(count);
     this.mass = new Float32Array(count);
     this.carved = new Uint8Array(count);
@@ -328,22 +410,141 @@ export class SoftCylinder {
       const yNorm = h / (H - 1);
       this.placeRest(0, 0, yNorm, tmp);
       const ci = this.centerIndex(h) * 3;
-      this.rest[ci] = tmp[0];
-      this.rest[ci + 1] = tmp[1];
-      this.rest[ci + 2] = tmp[2];
+      this.rest0[ci] = tmp[0];
+      this.rest0[ci + 1] = tmp[1];
+      this.rest0[ci + 2] = tmp[2];
       for (let r = 1; r <= rings; r++) {
         const rNorm = r / rings;
         for (let a = 0; a < A; a++) {
           const theta = (a / A) * TWO_PI;
           this.placeRest(rNorm, theta, yNorm, tmp);
           const o = this.ringIndex(r, h, a) * 3;
-          this.rest[o] = tmp[0];
-          this.rest[o + 1] = tmp[1];
-          this.rest[o + 2] = tmp[2];
+          this.rest0[o] = tmp[0];
+          this.rest0[o + 1] = tmp[1];
+          this.rest0[o + 2] = tmp[2];
         }
       }
     }
+    this._computeComAll(this.rest0, this.rest0Com);
+    this._applyOrientation({ snap: false, rebuild: !!this.qRest });
+  }
+
+  _computeComAll(src, out) {
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let w = 0;
+    for (let i = 0; i < this.count; i++) {
+      const m = this.mass[i];
+      const o = i * 3;
+      x += src[o] * m;
+      y += src[o + 1] * m;
+      z += src[o + 2] * m;
+      w += m;
+    }
+    const inv = w > 0 ? 1 / w : 0;
+    out[0] = x * inv;
+    out[1] = y * inv;
+    out[2] = z * inv;
+  }
+
+  _composeOrientR(out) {
+    eulerXyz(this.orientDeg.x, this.orientDeg.y, this.orientDeg.z, _tmpE);
+    mulMat3(this.zeroR, _tmpE, out);
+  }
+
+  _applyOrientation({ snap = true, rebuild = true } = {}) {
+    this._composeOrientR(this.orientR);
+    const R = this.orientR;
+    const cx = this.rest0Com[0];
+    const cy = this.rest0Com[1];
+    const cz = this.rest0Com[2];
+    const { rest0, rest, count } = this;
+    let minY = Infinity;
+    for (let i = 0; i < count; i++) {
+      const o = i * 3;
+      const qx = rest0[o] - cx;
+      const qy = rest0[o + 1] - cy;
+      const qz = rest0[o + 2] - cz;
+      rest[o] = R[0] * qx + R[1] * qy + R[2] * qz + cx;
+      rest[o + 1] = R[3] * qx + R[4] * qy + R[5] * qz + cy;
+      rest[o + 2] = R[6] * qx + R[7] * qy + R[8] * qz + cz;
+      if (rest[o + 1] < minY) minY = rest[o + 1];
+    }
+    const lift = this.floorY - minY;
+    this.orientLift = lift;
+    if (Math.abs(lift) > 1e-8) {
+      for (let i = 0; i < count; i++) rest[i * 3 + 1] += lift;
+    }
     this.restGeneration += 1;
+    if (rebuild && this.qRest) this._rebuildShapeRest();
+    if (snap && this.lastR) this.reset();
+  }
+
+  mapByOrient(x, y, z, R, lift, out) {
+    const cx = this.rest0Com[0];
+    const cy = this.rest0Com[1];
+    const cz = this.rest0Com[2];
+    const qx = x - cx;
+    const qy = y - cy;
+    const qz = z - cz;
+    out[0] = R[0] * qx + R[1] * qy + R[2] * qz + cx;
+    out[1] = R[3] * qx + R[4] * qy + R[5] * qz + cy + lift;
+    out[2] = R[6] * qx + R[7] * qy + R[8] * qz + cz;
+    return out;
+  }
+
+  unmapByOrient(x, y, z, R, lift, out) {
+    const cx = this.rest0Com[0];
+    const cy = this.rest0Com[1];
+    const cz = this.rest0Com[2];
+    const px = x - cx;
+    const py = y - lift - cy;
+    const pz = z - cz;
+    out[0] = R[0] * px + R[3] * py + R[6] * pz + cx;
+    out[1] = R[1] * px + R[4] * py + R[7] * pz + cy;
+    out[2] = R[2] * px + R[5] * py + R[8] * pz + cz;
+    return out;
+  }
+
+  rotateByOrient(dx, dy, dz, R, out) {
+    out[0] = R[0] * dx + R[1] * dy + R[2] * dz;
+    out[1] = R[3] * dx + R[4] * dy + R[5] * dz;
+    out[2] = R[6] * dx + R[7] * dy + R[8] * dz;
+    return out;
+  }
+
+  unrotateByOrient(dx, dy, dz, R, out) {
+    out[0] = R[0] * dx + R[3] * dy + R[6] * dz;
+    out[1] = R[1] * dx + R[4] * dy + R[7] * dz;
+    out[2] = R[2] * dx + R[5] * dy + R[8] * dz;
+    return out;
+  }
+
+  setOrientation(x, y, z) {
+    const prevR = this._prevOrientR || (this._prevOrientR = new Float32Array(9));
+    prevR.set(this.orientR);
+    const prevLift = this.orientLift;
+    this.orientDeg.x = wrapDeg(x);
+    this.orientDeg.y = wrapDeg(y);
+    this.orientDeg.z = wrapDeg(z);
+    this._applyOrientation({ snap: true, rebuild: true });
+    return { prevR, prevLift, nextR: this.orientR, nextLift: this.orientLift };
+  }
+
+  nudgeOrientation(axis, delta) {
+    const next = { ...this.orientDeg };
+    next[axis] = wrapDeg(next[axis] + delta);
+    return this.setOrientation(next.x, next.y, next.z);
+  }
+
+  setOrientationZero() {
+    this._composeOrientR(_tmpM);
+    this.zeroR.set(_tmpM);
+    this.orientDeg.x = 0;
+    this.orientDeg.y = 0;
+    this.orientDeg.z = 0;
+    this._composeOrientR(this.orientR);
   }
 
   _refreshConstraintRests() {

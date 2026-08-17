@@ -69,6 +69,42 @@ export class CarveSet {
     return false;
   }
 
+  reorient(soft, prevR, prevLift, nextR, nextLift) {
+    if (!this.ops.length) return;
+    const p0 = this._p0 || (this._p0 = new Float32Array(3));
+    const p1 = this._p1 || (this._p1 = new Float32Array(3));
+    const d0 = this._d0 || (this._d0 = new Float32Array(3));
+    const d1 = this._d1 || (this._d1 = new Float32Array(3));
+    for (let i = 0; i < this.ops.length; i++) {
+      const op = this.ops[i];
+      soft.unmapByOrient(op.ox, op.oy, op.oz, prevR, prevLift, p0);
+      soft.mapByOrient(p0[0], p0[1], p0[2], nextR, nextLift, p1);
+      soft.unrotateByOrient(op.dx, op.dy, op.dz, prevR, d0);
+      soft.rotateByOrient(d0[0], d0[1], d0[2], nextR, d1);
+      if (op.type === CARVE_PLANE) {
+        const nlen = Math.hypot(op.dx, op.dy, op.dz) || 1;
+        soft.unmapByOrient(
+          (op.dx / nlen) * op.offset,
+          (op.dy / nlen) * op.offset,
+          (op.dz / nlen) * op.offset,
+          prevR,
+          prevLift,
+          p0
+        );
+        soft.mapByOrient(p0[0], p0[1], p0[2], nextR, nextLift, p1);
+        const n1 = Math.hypot(d1[0], d1[1], d1[2]) || 1;
+        op.offset = (d1[0] * p1[0] + d1[1] * p1[1] + d1[2] * p1[2]) / n1;
+      }
+      op.ox = p1[0];
+      op.oy = p1[1];
+      op.oz = p1[2];
+      op.dx = d1[0];
+      op.dy = d1[1];
+      op.dz = d1[2];
+    }
+    this.syncUniforms();
+  }
+
   applyToSoft(soft) {
     const flags = this.flags && this.flags.length === soft.count
       ? this.flags

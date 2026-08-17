@@ -6,15 +6,41 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>透明软胶 · v6</title>
+    <title>透明软胶 · v7</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
       <canvas id="c"></canvas>
       <div class="quick" id="quickBar">
-        <button type="button" id="quickReset" title="只回正姿态，不改形态和雕刻">重置</button>
-        <button type="button" id="quickFix">固定</button>
+        <div class="quick-actions">
+          <button type="button" id="quickReset" title="只回正姿态，不改形态和雕刻">重置</button>
+          <button type="button" id="quickFix">固定</button>
+        </div>
+        <div class="axis-pad" id="axisPad">
+          <div class="axis-row" data-axis="x">
+            <span class="axis-tag axis-x">X</span>
+            <button type="button" class="axis-step" data-axis="x" data-delta="-5" aria-label="X减">−</button>
+            <input id="axisX" type="number" inputmode="decimal" step="1" value="0" aria-label="X轴角度" />
+            <button type="button" class="axis-step" data-axis="x" data-delta="5" aria-label="X加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <div class="axis-row" data-axis="y">
+            <span class="axis-tag axis-y">Y</span>
+            <button type="button" class="axis-step" data-axis="y" data-delta="-5" aria-label="Y减">−</button>
+            <input id="axisY" type="number" inputmode="decimal" step="1" value="0" aria-label="Y轴角度" />
+            <button type="button" class="axis-step" data-axis="y" data-delta="5" aria-label="Y加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <div class="axis-row" data-axis="z">
+            <span class="axis-tag axis-z">Z</span>
+            <button type="button" class="axis-step" data-axis="z" data-delta="-5" aria-label="Z减">−</button>
+            <input id="axisZ" type="number" inputmode="decimal" step="1" value="0" aria-label="Z轴角度" />
+            <button type="button" class="axis-step" data-axis="z" data-delta="5" aria-label="Z加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <button type="button" id="axisZero" title="把当前方向当作 0°">设为零点</button>
+        </div>
       </div>
       <aside class="hud" id="hud">
         <div class="hud-bar">
@@ -22,7 +48,7 @@
           <button type="button" id="hudToggle" aria-expanded="true">收起</button>
         </div>
         <div class="hud-body" id="hudBody">
-        <p class="hint" id="hint">拖拽揉捏表面，空白处旋转视角。重置只回正姿态，不改形态和雕刻。</p>
+        <p class="hint" id="hint">拖拽揉捏。左上角 XYZ 调方向，可把当前角度设为零点。重置只回正姿态。</p>
 
         <div class="row">
           <label>形态</label>

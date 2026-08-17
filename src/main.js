@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { GEL_SHAPES, SoftCylinder } from "./physics/SoftCylinder.js";
+import { GEL_SHAPES, SoftCylinder, wrapDeg } from "./physics/SoftCylinder.js";
 import {
   DEFAULT_GEL_COLOR,
   applyGelColor,
@@ -38,6 +38,10 @@ const toolSizeEl = document.querySelector("#toolSize");
 const toolSizeOut = document.querySelector("#toolSizeOut");
 const quickReset = document.querySelector("#quickReset");
 const quickFix = document.querySelector("#quickFix");
+const axisXEl = document.querySelector("#axisX");
+const axisYEl = document.querySelector("#axisY");
+const axisZEl = document.querySelector("#axisZ");
+const axisZeroEl = document.querySelector("#axisZero");
 const hudEl = document.querySelector("#hud");
 const hudToggle = document.querySelector("#hudToggle");
 const hudBar = hudEl.querySelector(".hud-bar");
@@ -534,6 +538,30 @@ function applyShape(name) {
   meshDirty = true;
 }
 
+function formatDeg(value) {
+  const n = wrapDeg(value);
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function syncAxisInputs() {
+  axisXEl.value = formatDeg(soft.orientDeg.x);
+  axisYEl.value = formatDeg(soft.orientDeg.y);
+  axisZEl.value = formatDeg(soft.orientDeg.z);
+}
+
+function applyOrientChange(mapped) {
+  if (carveSet.ops.length) {
+    carveSet.reorient(soft, mapped.prevR, mapped.prevLift, mapped.nextR, mapped.nextLift);
+    carveSet.applyToSoft(soft);
+  }
+  syncAxisInputs();
+  meshDirty = true;
+}
+
+function setAxisValues(x, y, z) {
+  applyOrientChange(soft.setOrientation(x, y, z));
+}
+
 function doReset() {
   soft.reset();
   meshDirty = true;
@@ -554,6 +582,7 @@ document.querySelectorAll("[data-shape]").forEach((btn) => {
 document.querySelector("#poke").addEventListener("click", () => {
   if (editMode) return;
   const pokeAt = soft.placeRest(1, 0, 0.58, new Float32Array(3));
+  soft.mapByOrient(pokeAt[0], pokeAt[1], pokeAt[2], soft.orientR, soft.orientLift, pokeAt);
   const mid = soft.closestParticle(pokeAt[0], pokeAt[1], pokeAt[2], true);
   const o = mid * 3;
   soft.vel[o] += 3.4;
@@ -575,12 +604,12 @@ function setEditMode(on) {
   if (on) {
     soft.reset();
     meshDirty = true;
-    hintEl.textContent = "胶已固定在当前形态。点在胶上打洞、切削或裁切。重置只回正姿态。";
+    hintEl.textContent = "胶已固定。左上角 XYZ 调方向，设为零点后读数归零。重置只回正姿态。";
     canvas.style.cursor = "crosshair";
     if (isPhoneHud()) setHudCollapsed(false);
   } else {
     hidePreviews();
-    hintEl.textContent = "拖拽揉捏表面，空白处旋转视角。重置只回正姿态，不改形态和雕刻。";
+    hintEl.textContent = "拖拽揉捏。左上角 XYZ 调方向，可把当前角度设为零点。重置只回正姿态。";
     canvas.style.cursor = "default";
     soft.sleeping = false;
     meshDirty = true;
@@ -607,6 +636,66 @@ quickFix.addEventListener("pointerdown", (event) => {
   event.stopPropagation();
   setEditMode(!editMode);
 });
+
+function readAxisInputs() {
+  setAxisValues(axisXEl.value, axisYEl.value, axisZEl.value);
+}
+
+[axisXEl, axisYEl, axisZEl].forEach((el) => {
+  el.addEventListener("change", readAxisInputs);
+  el.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      readAxisInputs();
+      el.blur();
+    }
+  });
+});
+
+let axisHoldTimer = 0;
+let axisHoldRepeat = 0;
+
+function stopAxisHold() {
+  window.clearTimeout(axisHoldTimer);
+  window.clearInterval(axisHoldRepeat);
+  axisHoldTimer = 0;
+  axisHoldRepeat = 0;
+}
+
+function stepAxis(axis, delta) {
+  applyOrientChange(soft.nudgeOrientation(axis, delta));
+}
+
+document.querySelectorAll(".axis-step").forEach((btn) => {
+  const axis = btn.dataset.axis;
+  const delta = Number(btn.dataset.delta);
+  btn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    btn.setPointerCapture(event.pointerId);
+    stepAxis(axis, delta);
+    stopAxisHold();
+    axisHoldTimer = window.setTimeout(() => {
+      axisHoldRepeat = window.setInterval(() => stepAxis(axis, delta), 70);
+    }, 380);
+  });
+  btn.addEventListener("pointerup", stopAxisHold);
+  btn.addEventListener("pointercancel", stopAxisHold);
+  btn.addEventListener("lostpointercapture", stopAxisHold);
+});
+
+axisZeroEl.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  soft.setOrientationZero();
+  syncAxisInputs();
+  axisZeroEl.textContent = "已设为零点";
+  window.setTimeout(() => {
+    axisZeroEl.textContent = "设为零点";
+  }, 900);
+});
+
+syncAxisInputs();
 toolSizeEl.addEventListener("input", () => {
   refreshToolSizeLabel();
 });
