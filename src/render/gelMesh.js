@@ -89,7 +89,7 @@ export function createGelGeometry({
   return geometry;
 }
 
-export function deformGelGeometry(geometry, soft) {
+export function deformGelGeometry(geometry, soft, { normals = true } = {}) {
   const pos = geometry.attributes.position;
   const samples = geometry.userData.samples;
   const n = pos.count;
@@ -103,7 +103,7 @@ export function deformGelGeometry(geometry, soft) {
     arr[o + 2] = _sample[2];
   }
   pos.needsUpdate = true;
-  geometry.computeVertexNormals();
+  if (normals) geometry.computeVertexNormals();
 }
 
 export function createGelMaterial() {

@@ -46,6 +46,7 @@ camera.position.set(1.55, 1.35, 2.15);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+controls.enablePan = false;
 controls.target.set(0, 0.78, 0);
 controls.minDistance = 1.1;
 controls.maxDistance = 6;
@@ -138,8 +139,11 @@ const grabPlane = new THREE.Plane();
 const hitPoint = new THREE.Vector3();
 const planeHit = new THREE.Vector3();
 const camDir = new THREE.Vector3();
+const _pick = new THREE.Vector3();
+const _closest = new THREE.Vector3();
 
 let interacting = false;
+let meshDirty = true;
 let frames = 0;
 let fps = 0;
 let fpsAccum = 0;
@@ -153,24 +157,51 @@ function setPointer(event) {
   pointer.y = -((src.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
+function pickGel() {
+  const meshHits = raycaster.intersectObject(gel, false);
+  if (meshHits.length) return meshHits[0].point;
+  const ray = raycaster.ray;
+  let best = 0.12;
+  let found = false;
+  const { pos, A, H, rings } = soft;
+  for (let h = 0; h < H; h++) {
+    for (let a = 0; a < A; a++) {
+      const i = soft.ringIndex(rings, h, a);
+      _pick.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+      const d = ray.distanceToPoint(_pick);
+      if (d < best) {
+        best = d;
+        ray.closestPointToPoint(_pick, _closest);
+        hitPoint.copy(_closest);
+        found = true;
+      }
+    }
+  }
+  return found ? hitPoint : null;
+}
+
 function beginInteract(event) {
+  if (event.isPrimary === false) return;
+  if (event.button != null && event.button !== 0) return;
   if (event.touches && event.touches.length > 1) return;
   setPointer(event);
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObject(gel, false);
-  if (!hits.length) return;
+  const p = pickGel();
+  if (!p) return;
   event.preventDefault();
+  event.stopImmediatePropagation();
   interacting = true;
+  meshDirty = true;
   controls.enabled = false;
-  const p = hits[0].point;
+  canvas.style.cursor = "grabbing";
   hitPoint.copy(p);
   camera.getWorldDirection(camDir);
   grabPlane.setFromNormalAndCoplanarPoint(camDir, p);
   const idx = soft.closestParticle(p.x, p.y, p.z, true);
   soft.grabParticle(idx, p.x, p.y, p.z);
-  soft.attachFinger(p.x, p.y, p.z, 0.13);
+  soft.attachFinger(p.x, p.y, p.z, 0.135);
   fingerMesh.position.copy(p);
-  fingerMesh.scale.setScalar(0.13);
+  fingerMesh.scale.setScalar(0.135);
   fingerMesh.visible = true;
 }
 
@@ -193,18 +224,25 @@ function endInteract() {
   controls.enabled = true;
   soft.releaseFinger();
   fingerMesh.visible = false;
+  canvas.style.cursor = "default";
 }
 
-canvas.addEventListener("pointerdown", beginInteract);
+canvas.addEventListener("pointerdown", beginInteract, { capture: true });
 window.addEventListener("pointermove", moveInteract);
 window.addEventListener("pointerup", endInteract);
 window.addEventListener("pointercancel", endInteract);
+canvas.addEventListener("pointermove", (event) => {
+  if (interacting) return;
+  setPointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  canvas.style.cursor = pickGel() ? "grab" : "default";
+});
 canvas.addEventListener(
   "touchstart",
   (e) => {
     if (e.touches.length === 1) beginInteract(e);
   },
-  { passive: false }
+  { capture: true, passive: false }
 );
 window.addEventListener("touchmove", moveInteract, { passive: false });
 window.addEventListener("touchend", endInteract);
@@ -232,18 +270,28 @@ gravityEl.addEventListener("input", () => {
   soft.setGravity(-g);
 });
 pinEl.addEventListener("change", () => soft.setPinBottom(pinEl.checked));
-document.querySelector("#reset").addEventListener("click", () => soft.reset());
+document.querySelector("#reset").addEventListener("click", () => {
+  soft.reset();
+  meshDirty = true;
+});
 document.querySelector("#drop").addEventListener("click", () => {
   pinEl.checked = false;
   soft.setPinBottom(false);
   soft.drop(1.05);
+  meshDirty = true;
 });
 document.querySelector("#poke").addEventListener("click", () => {
-  const mid = soft.closestParticle(soft.radius, soft.height * 0.62, 0, true);
+  const mid = soft.closestParticle(
+    soft.radius,
+    soft.height * 0.62 + soft.floorY,
+    0,
+    true
+  );
   const o = mid * 3;
-  soft.vel[o] += 2.8;
-  soft.vel[o + 2] += 0.4;
+  soft.vel[o] += 3.4;
+  soft.vel[o + 2] += 0.35;
   soft.sleeping = false;
+  meshDirty = true;
 });
 document.querySelectorAll("[data-soft]").forEach((btn) => {
   btn.addEventListener("click", () => applySoftness(btn.dataset.soft));
@@ -260,8 +308,11 @@ function tick(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
   soft.step(dt);
-  deformGelGeometry(gelGeom, soft);
-  gelGeom.computeBoundingSphere();
+  if (!soft.sleeping || interacting || meshDirty) {
+    deformGelGeometry(gelGeom, soft, { normals: frames % 2 === 0 || interacting });
+    gelGeom.computeBoundingSphere();
+    meshDirty = !soft.sleeping;
+  }
   controls.update();
   renderer.render(scene, camera);
 
