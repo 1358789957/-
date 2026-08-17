@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>透明软胶 · v12</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="c"></canvas>
+      <div class="quick" id="quickBar">
+        <div class="quick-actions">
+          <button type="button" id="quickPose" title="只回正姿态">复位</button>
+          <button type="button" id="quickReset" title="完全重置形态、方向和雕刻">重置</button>
+          <button type="button" id="quickFix">固定</button>
+        </div>
+        <button type="button" id="axisToggle" aria-expanded="false">方向</button>
+        <div class="axis-pad" id="axisPad" hidden>
+          <div class="axis-row" data-axis="x">
+            <span class="axis-tag axis-x">X</span>
+            <button type="button" class="axis-step" data-axis="x" data-delta="-5" aria-label="X减">−</button>
+            <input id="axisX" type="number" inputmode="decimal" step="1" value="0" aria-label="X轴角度" />
+            <button type="button" class="axis-step" data-axis="x" data-delta="5" aria-label="X加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <div class="axis-row" data-axis="y">
+            <span class="axis-tag axis-y">Y</span>
+            <button type="button" class="axis-step" data-axis="y" data-delta="-5" aria-label="Y减">−</button>
+            <input id="axisY" type="number" inputmode="decimal" step="1" value="0" aria-label="Y轴角度" />
+            <button type="button" class="axis-step" data-axis="y" data-delta="5" aria-label="Y加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <div class="axis-row" data-axis="z">
+            <span class="axis-tag axis-z">Z</span>
+            <button type="button" class="axis-step" data-axis="z" data-delta="-5" aria-label="Z减">−</button>
+            <input id="axisZ" type="number" inputmode="decimal" step="1" value="0" aria-label="Z轴角度" />
+            <button type="button" class="axis-step" data-axis="z" data-delta="5" aria-label="Z加">+</button>
+            <span class="axis-unit">°</span>
+          </div>
+          <button type="button" id="axisZero" title="把当前方向当作 0°">设为零点</button>
+        </div>
+        <div class="edit-quick" id="editQuick" hidden>
+          <button type="button" data-tool="sculpt" class="active">塑形</button>
+          <button type="button" data-tool="hole">打洞</button>
+          <button type="button" data-tool="carve">切削</button>
+          <button type="button" data-tool="slice">裁切</button>
+        </div>
+      </div>
+      <aside class="hud" id="hud">
+        <div class="hud-bar">
+          <h1>透明软胶</h1>
+          <button type="button" id="hudToggle" aria-expanded="true">收起</button>
+        </div>
+        <div class="hud-body" id="hudBody">
+        <p class="hint" id="hint">实心软胶。复位只回正。重置全部清空。固定冻在当前位置，不会弹回。</p>
+
+        <div class="row">
+          <label>形态</label>
+          <output id="shapeOut">圆柱</output>
+        </div>
+        <div class="presets shapes" id="shapePresets">
+          <button type="button" data-shape="cylinder" class="active">圆柱</button>
+          <button type="button" data-shape="sphere">圆珠</button>
+          <button type="button" data-shape="prism">棱柱</button>
+          <button type="button" data-shape="grip">握柄</button>
+        </div>
+
+        <div class="modes">
+          <button type="button" id="modeSim" class="active">模拟</button>
+          <button type="button" id="modeEdit">固定模式</button>
+        </div>
+
+        <div id="editPanel" class="edit-panel" hidden>
+          <div class="presets tools">
+            <button type="button" data-tool="sculpt" class="active">塑形</button>
+            <button type="button" data-tool="hole">打洞</button>
+            <button type="button" data-tool="carve">切削</button>
+            <button type="button" data-tool="slice">裁切</button>
+          </div>
+          <div class="row">
+            <label for="toolSize">道具大小</label>
+            <output id="toolSizeOut">中</output>
+          </div>
+          <input id="toolSize" type="range" min="12" max="90" value="40" />
+          <div class="actions">
+            <button type="button" id="undoCarve">撤销</button>
+            <button type="button" id="clearCarve">清除雕刻</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="softness">软度</label>
+          <output id="softnessOut">中等 55%</output>
+        </div>
+        <input id="softness" type="range" min="0" max="100" value="55" />
+        <div class="ends"><span>硬</span><span>软</span></div>
+
+        <div class="presets">
+          <button type="button" data-soft="18">硬胶</button>
+          <button type="button" data-soft="55">中等</button>
+          <button type="button" data-soft="88">超软</button>
+        </div>
+
+        <div class="row">
+          <label for="gelColor">颜色</label>
+          <output id="gelColorOut">#C8F4FF</output>
+        </div>
+        <div class="color-row">
+          <label class="color-chip" title="打开色盘">
+            <input id="gelColor" type="color" value="#c8f4ff" />
+          </label>
+          <div class="swatches" id="swatches">
+            <button type="button" data-color="#c8f4ff" style="--sw:#c8f4ff" title="冰蓝"></button>
+            <button type="button" data-color="#f4fbff" style="--sw:#f4fbff" title="透明"></button>
+            <button type="button" data-color="#ffb7d5" style="--sw:#ffb7d5" title="粉"></button>
+            <button type="button" data-color="#ffc56e" style="--sw:#ffc56e" title="琥珀"></button>
+            <button type="button" data-color="#9ef0c6" style="--sw:#9ef0c6" title="薄荷"></button>
+            <button type="button" data-color="#c5b7ff" style="--sw:#c5b7ff" title="紫"></button>
+            <button type="button" data-color="#ff8a7a" style="--sw:#ff8a7a" title="珊瑚"></button>
+            <button type="button" data-color="#d4d8e0" style="--sw:#d4d8e0" title="烟灰"></button>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="damping">阻尼</label>
+          <output id="dampingOut">26%</output>
+        </div>
+        <input id="damping" type="range" min="4" max="80" value="26" />
+
+        <div class="row">
+          <label for="gravity">重力</label>
+          <output id="gravityOut">7.2</output>
+        </div>
+        <input id="gravity" type="range" min="0" max="140" value="72" />
+
+        <div class="actions">
+          <button type="button" id="reset" title="只回正姿态">复位</button>
+          <button type="button" id="fullReset" title="完全重置">重置</button>
+          <button type="button" id="drop">抛落</button>
+          <button type="button" id="poke">轻弹</button>
+        </div>
+        <label class="check">
+          <input id="pinBottom" type="checkbox" />
+          固定底部
+        </label>
+        </div>
+      </aside>
+      <div class="stats" id="stats"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
